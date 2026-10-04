@@ -1,0 +1,27 @@
+# Dependency directories
+node_modules/
+
+# Build outputs
+dist/
+out/
+*.vsix
+
+# Environment & editor
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
+.vscode-test/
+
+# Database files
+*.duckdb
+*.duckdb.wal
+*.duckdb.tmp
+mock_ducklake.duckdb
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS metadata
+.DS_Store
+Thumbs.db

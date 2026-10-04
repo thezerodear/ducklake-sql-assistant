@@ -1,0 +1,170 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "sql-injection",
+  "scopeName": "sql.injection",
+  "injectionSelector": "L:source.python",
+  "patterns": [
+    {
+      "name": "meta.embedded.inline.sql.python.call.triple-double",
+      "contentName": "source.sql",
+      "begin": "(?i)(?:con|conn|db|duckdb|session|cursor|engine|spark)\\s*\\.\\s*(?:sql|query|execute|read_sql|write_sql)\\s*\\(\\s*(f?r?|r?f?)(\"\"\")",
+      "beginCaptures": {
+        "1": { "name": "storage.type.string.python" },
+        "2": { "name": "punctuation.definition.string.begin.python" }
+      },
+      "end": "(\"\"\")",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.string.end.python" }
+      },
+      "patterns": [
+        { "include": "#duckdb-features" },
+        { "include": "source.sql" }
+      ]
+    },
+    {
+      "name": "meta.embedded.inline.sql.python.call.triple-single",
+      "contentName": "source.sql",
+      "begin": "(?i)(?:con|conn|db|duckdb|session|cursor|engine|spark)\\s*\\.\\s*(?:sql|query|execute|read_sql|write_sql)\\s*\\(\\s*(f?r?|r?f?)(''')",
+      "beginCaptures": {
+        "1": { "name": "storage.type.string.python" },
+        "2": { "name": "punctuation.definition.string.begin.python" }
+      },
+      "end": "(''')",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.string.end.python" }
+      },
+      "patterns": [
+        { "include": "#duckdb-features" },
+        { "include": "source.sql" }
+      ]
+    },
+    {
+      "name": "meta.embedded.inline.sql.python.call.single-double",
+      "contentName": "source.sql",
+      "begin": "(?i)(?:con|conn|db|duckdb|session|cursor|engine|spark)\\s*\\.\\s*(?:sql|query|execute|read_sql)\\s*\\(\\s*(f?r?|r?f?)(\")",
+      "beginCaptures": {
+        "1": { "name": "storage.type.string.python" },
+        "2": { "name": "punctuation.definition.string.begin.python" }
+      },
+      "end": "(\")",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.string.end.python" }
+      },
+      "patterns": [
+        { "include": "#duckdb-features" },
+        { "include": "source.sql" }
+      ]
+    },
+    {
+      "name": "meta.embedded.inline.sql.python.call.single-single",
+      "contentName": "source.sql",
+      "begin": "(?i)(?:con|conn|db|duckdb|session|cursor|engine|spark)\\s*\\.\\s*(?:sql|query|execute|read_sql)\\s*\\(\\s*(f?r?|r?f?)(')",
+      "beginCaptures": {
+        "1": { "name": "storage.type.string.python" },
+        "2": { "name": "punctuation.definition.string.begin.python" }
+      },
+      "end": "(')",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.string.end.python" }
+      },
+      "patterns": [
+        { "include": "#duckdb-features" },
+        { "include": "source.sql" }
+      ]
+    },
+    {
+      "name": "meta.embedded.inline.sql.python.comment.triple-double",
+      "contentName": "source.sql",
+      "begin": "(?i)(f?r?|r?f?)(\"\"\")(?=\\s*(?:--\\s*sql|/\\*\\s*sql\\s*\\*/))",
+      "beginCaptures": {
+        "1": { "name": "storage.type.string.python" },
+        "2": { "name": "punctuation.definition.string.begin.python" }
+      },
+      "end": "(\"\"\")",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.string.end.python" }
+      },
+      "patterns": [
+        { "include": "#duckdb-features" },
+        { "include": "source.sql" }
+      ]
+    },
+    {
+      "name": "meta.embedded.inline.sql.python.comment.triple-single",
+      "contentName": "source.sql",
+      "begin": "(?i)(f?r?|r?f?)(''')(?=\\s*(?:--\\s*sql|/\\*\\s*sql\\s*\\*/))",
+      "beginCaptures": {
+        "1": { "name": "storage.type.string.python" },
+        "2": { "name": "punctuation.definition.string.begin.python" }
+      },
+      "end": "(''')",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.string.end.python" }
+      },
+      "patterns": [
+        { "include": "#duckdb-features" },
+        { "include": "source.sql" }
+      ]
+    },
+    {
+      "name": "meta.embedded.inline.sql.python.heuristic.triple-double",
+      "contentName": "source.sql",
+      "begin": "(?i)(f?r?|r?f?)(\"\"\")(?=\\s*(?:SELECT|WITH|INSERT\\s+INTO|CREATE\\s+(?:TABLE|VIEW|OR\\s+REPLACE)|UPDATE|DELETE\\s+FROM|DROP\\s+(?:TABLE|VIEW)|ALTER\\s+TABLE|DESCRIBE|EXPLAIN|SHOW|ATTACH|DETACH|PRAGMA|COPY)\\b)",
+      "beginCaptures": {
+        "1": { "name": "storage.type.string.python" },
+        "2": { "name": "punctuation.definition.string.begin.python" }
+      },
+      "end": "(\"\"\")",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.string.end.python" }
+      },
+      "patterns": [
+        { "include": "#duckdb-features" },
+        { "include": "source.sql" }
+      ]
+    },
+    {
+      "name": "meta.embedded.inline.sql.python.heuristic.triple-single",
+      "contentName": "source.sql",
+      "begin": "(?i)(f?r?|r?f?)(''')(?=\\s*(?:SELECT|WITH|INSERT\\s+INTO|CREATE\\s+(?:TABLE|VIEW|OR\\s+REPLACE)|UPDATE|DELETE\\s+FROM|DROP\\s+(?:TABLE|VIEW)|ALTER\\s+TABLE|DESCRIBE|EXPLAIN|SHOW|ATTACH|DETACH|PRAGMA|COPY)\\b)",
+      "beginCaptures": {
+        "1": { "name": "storage.type.string.python" },
+        "2": { "name": "punctuation.definition.string.begin.python" }
+      },
+      "end": "(''')",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.string.end.python" }
+      },
+      "patterns": [
+        { "include": "#duckdb-features" },
+        { "include": "source.sql" }
+      ]
+    }
+  ],
+  "repository": {
+    "duckdb-features": {
+      "patterns": [
+        {
+          "name": "support.function.duckdb.columns",
+          "match": "(?i)\\bCOLUMNS\\b(?=\\s*\\()"
+        },
+        {
+          "name": "keyword.other.duckdb.star-modifier",
+          "match": "(?i)\\b(EXCLUDE|REPLACE)\\b"
+        },
+        {
+          "name": "keyword.other.duckdb.clauses",
+          "match": "(?i)\\b(QUALIFY|PIVOT|UNPIVOT|ASOF\\s+JOIN|POSITIONAL\\s+JOIN|SAMPLE)\\b"
+        },
+        {
+          "name": "support.function.duckdb.builtin",
+          "match": "(?i)\\b(read_parquet|read_csv|read_json|read_blob|read_text|write_parquet|write_csv|duckdb_tables|duckdb_columns|duckdb_views|duckdb_schemas|duckdb_databases|duckdb_functions|duckdb_settings|list_transform|list_filter|list_reduce|list_contains|list_concat|list_slice|list_sort|list_reverse|unnest|flatten|struct_pack|struct_extract|map|map_from_entries|quantile_cont|quantile_disc|approx_count_distinct|arg_max|arg_min|bar|histogram|regexp_extract|regexp_matches|regexp_replace|date_trunc|strftime|strptime|epoch_ms)\\b(?=\\s*\\()"
+        },
+        {
+          "name": "keyword.operator.arrow.duckdb",
+          "match": "->>?"
+        }
+      ]
+    }
+  }
+}

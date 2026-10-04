@@ -1,0 +1,13 @@
+.vscode/**
+.vscode-test/**
+src/**
+test/**
+test_*.js
+debug_*.js
+inspect_ducklake.js
+*.vsix
+**/*.map
+*.duckdb*
+**/*.duckdb*
+.gitignore
+tsconfig.json

@@ -1,0 +1,267 @@
+{
+  "name": "ducklake-sql-assistant",
+  "displayName": "DuckLake SQL Assistant",
+  "description": "SQL Syntax Highlighting, Smart Autocomplete, Sidebar Catalog Explorer, and Postgres/DuckDB Catalog Autosuggestion inside Python & Jupyter Notebook triple quotes for DuckLake / DuckDB.",
+  "version": "0.4.0",
+  "author": "takdanai.mp",
+  "publisher": "takdanai-mp",
+  "license": "MIT",
+  "icon": "media/logo.png",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Data Science",
+    "Notebooks"
+  ],
+  "keywords": [
+    "ducklake",
+    "duckdb",
+    "sql",
+    "postgres",
+    "catalog",
+    "jupyter",
+    "notebook",
+    "autocomplete"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thezerodear/ducklake-sql-assistant"
+  },
+  "activationEvents": [
+    "onLanguage:python",
+    "onNotebook:*",
+    "onView:ducklakeCatalogView"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "ducklake-explorer",
+          "title": "DuckLake",
+          "icon": "media/tab-icon.png"
+        }
+      ]
+    },
+    "views": {
+      "ducklake-explorer": [
+        {
+          "id": "ducklakeCatalogView",
+          "name": "DuckLake Catalog"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "ducklake.refreshCatalog",
+        "title": "Refresh Catalog",
+        "category": "DuckLake",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "ducklake.openConnectionModal",
+        "title": "DuckLake: Connect Catalog (GUI)",
+        "category": "DuckLake",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "ducklake.copyConnectCode",
+        "title": "DuckLake: Copy Python Connect Code",
+        "category": "DuckLake",
+        "icon": "$(clippy)"
+      },
+      {
+        "command": "ducklake.testConnection",
+        "title": "DuckLake: Test Catalog Connection",
+        "category": "DuckLake",
+        "icon": "$(zap)"
+      },
+      {
+        "command": "ducklake.insertSelectQuery",
+        "title": "Insert SELECT Query",
+        "category": "DuckLake",
+        "icon": "$(file-code)"
+      },
+      {
+        "command": "ducklake.copyName",
+        "title": "Copy Name",
+        "category": "DuckLake",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "ducklake.createMockDatabase",
+        "title": "DuckLake: Create & Connect Mock DuckDB Database",
+        "category": "DuckLake",
+        "icon": "$(database)"
+      },
+      {
+        "command": "ducklake.openSettings",
+        "title": "DuckLake: Open Connection Settings",
+        "category": "DuckLake",
+        "icon": "$(gear)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "ducklake.refreshCatalog",
+          "when": "view == ducklakeCatalogView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "ducklake.openConnectionModal",
+          "when": "view == ducklakeCatalogView",
+          "group": "navigation@2"
+        },
+        {
+          "command": "ducklake.copyConnectCode",
+          "when": "view == ducklakeCatalogView",
+          "group": "navigation@3"
+        },
+        {
+          "command": "ducklake.openSettings",
+          "when": "view == ducklakeCatalogView",
+          "group": "navigation@4"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "ducklake.insertSelectQuery",
+          "when": "view == ducklakeCatalogView && viewItem == table",
+          "group": "inline"
+        },
+        {
+          "command": "ducklake.copyName",
+          "when": "view == ducklakeCatalogView",
+          "group": "inline"
+        }
+      ]
+    },
+    "grammars": [
+      {
+        "scopeName": "sql.injection",
+        "path": "./syntaxes/sql-injection.json",
+        "injectTo": [
+          "source.python"
+        ]
+      }
+    ],
+    "configurationDefaults": {
+      "[python]": {
+        "editor.quickSuggestions": {
+          "other": "on",
+          "comments": "off",
+          "strings": "on"
+        }
+      }
+    },
+    "configuration": {
+      "title": "DuckLake SQL Assistant",
+      "properties": {
+        "ducklake.duckdb.databasePath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to local DuckDB database file (e.g. mock_ducklake.duckdb). If left empty, auto-detects in workspace."
+        },
+        "ducklake.postgres.connectionString": {
+          "type": "string",
+          "default": "",
+          "description": "PostgreSQL connection URI (e.g., postgresql://user:password@localhost:5439/ducklake_catalog). If provided, this overrides individual host/port/user settings."
+        },
+        "ducklake.postgres.host": {
+          "type": "string",
+          "default": "localhost",
+          "description": "PostgreSQL host for DuckLake catalog."
+        },
+        "ducklake.postgres.port": {
+          "type": "number",
+          "default": 5439,
+          "description": "PostgreSQL port for DuckLake catalog."
+        },
+        "ducklake.postgres.database": {
+          "type": "string",
+          "default": "ducklake_catalog",
+          "description": "PostgreSQL database name containing the DuckLake catalog."
+        },
+        "ducklake.postgres.user": {
+          "type": "string",
+          "default": "postgres",
+          "description": "PostgreSQL username."
+        },
+        "ducklake.postgres.password": {
+          "type": "string",
+          "default": "ducklake123",
+          "description": "PostgreSQL password."
+        },
+        "ducklake.postgres.ssl": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable SSL for PostgreSQL connection."
+        },
+        "ducklake.catalogSchemas": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "public",
+            "main"
+          ],
+          "description": "Postgres/DuckDB schema names to scan for tables and columns."
+        },
+        "ducklake.autoRefreshMinutes": {
+          "type": "number",
+          "default": 10,
+          "description": "Interval (in minutes) to automatically refresh catalog metadata. Set to 0 to disable."
+        },
+        "ducklake.enableSmartHeuristic": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable smart detection of SQL inside triple quotes (checking keywords, .sql() calls, or --sql comments)."
+        },
+        "ducklake.suggestDuckDBFunctions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include DuckDB built-in analytical functions in autocompletion."
+        },
+        "ducklake.connectionName": {
+          "type": "string",
+          "default": "lake",
+          "description": "Connection profile name."
+        },
+        "ducklake.dataPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to local or cloud directory storing DuckLake Parquet data files."
+        },
+        "ducklake.overrideDataPath": {
+          "type": "boolean",
+          "default": false,
+          "description": "Override data path stored in catalog with custom data path."
+        },
+        "ducklake.databaseAlias": {
+          "type": "string",
+          "default": "lake",
+          "description": "Alias name for the attached DuckLake catalog."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "dependencies": {
+    "pg": "^8.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/pg": "^8.11.6",
+    "@types/vscode": "^1.80.0",
+    "@vscode/vsce": "^3.2.1",
+    "typescript": "^5.4.5"
+  }
+}
