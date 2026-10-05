@@ -44,7 +44,7 @@ export class SchemaManager implements vscode.Disposable {
       alwaysEnableInTripleQuotes: conf.get<boolean>('alwaysEnableInTripleQuotes', true),
       connectionName: conf.get<string>('connectionName', 'lake'),
       catalogType: conf.get<string>('catalogType', 'server'),
-      catalog: conf.get<string>('catalog', ''),
+      clientEncoding: conf.get<string>('postgres.clientEncoding', 'auto'),
       dataStorage: conf.get<string>('dataStorage', 'local'),
       dataPath: conf.get<string>('dataPath', ''),
       overrideDataPath: conf.get<boolean>('overrideDataPath', false),

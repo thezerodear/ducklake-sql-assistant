@@ -34,7 +34,7 @@ export interface PostgresConfig {
   alwaysEnableInTripleQuotes: boolean;
   connectionName?: string;
   catalogType?: string;
-  catalog?: string;
+  clientEncoding?: string;
   dataStorage?: string;
   dataPath?: string;
   overrideDataPath?: boolean;

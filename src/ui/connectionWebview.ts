@@ -220,35 +220,50 @@ con.sql("SHOW TABLES;").show()
   private async handleSave(data: any): Promise<void> {
     try {
       const config = vscode.workspace.getConfiguration('ducklake');
-      const connStr = data.catalogConnection?.trim() || data.connectionString?.trim() || '';
-      const parsed = PostgresCatalogClient.parseConnString(connStr);
+      const isLocal = data.catalogType === 'local';
 
-      const host = parsed.host || data.host || 'localhost';
-      const port = parsed.port || parseInt(data.port, 10) || 5439;
-      const database = parsed.database || data.database || 'ducklake_catalog';
-      const user = parsed.user || data.user || 'postgres';
-      const password = parsed.password !== undefined ? parsed.password : (data.password || '');
-
-      const target = vscode.workspace.workspaceFolders
+      const target = (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0)
         ? vscode.ConfigurationTarget.Workspace
         : vscode.ConfigurationTarget.Global;
 
-      await config.update('connectionName', data.connectionName || 'lake', target);
-      await config.update('catalogType', data.catalogType || 'server', target);
-      await config.update('catalog', data.databaseAlias || data.connectionName || 'lake', target);
-      await config.update('postgres.connectionString', connStr, target);
-      await config.update('postgres.host', host, target);
-      await config.update('postgres.port', port, target);
-      await config.update('postgres.database', database, target);
-      await config.update('postgres.user', user, target);
-      await config.update('postgres.password', password, target);
-      await config.update('postgres.ssl', !!data.ssl, target);
-      await config.update('dataPath', data.dataPath || '', target);
-      await config.update('overrideDataPath', !!data.overrideDataPath, target);
-      await config.update('databaseAlias', data.databaseAlias || 'lake', target);
+      // Safe update helper with fallback
+      const setConfig = async (key: string, val: any) => {
+        try {
+          await config.update(key, val, target);
+        } catch (err) {
+          if (target === vscode.ConfigurationTarget.Workspace) {
+            await config.update(key, val, vscode.ConfigurationTarget.Global);
+          } else {
+            throw err;
+          }
+        }
+      };
 
-      if (data.catalogType === 'local') {
-        await config.update('duckdb.databasePath', data.catalogConnection || '', target);
+      await setConfig('connectionName', data.connectionName || 'lake');
+      await setConfig('catalogType', data.catalogType || 'server');
+      await setConfig('dataPath', data.dataPath || '');
+      await setConfig('overrideDataPath', !!data.overrideDataPath);
+      await setConfig('databaseAlias', data.databaseAlias || 'lake');
+
+      if (isLocal) {
+        await setConfig('duckdb.databasePath', data.catalogConnection?.trim() || '');
+      } else {
+        const connStr = data.catalogConnection?.trim() || data.connectionString?.trim() || '';
+        const parsed = PostgresCatalogClient.parseConnString(connStr);
+
+        const host = parsed.host || data.host || 'localhost';
+        const port = parsed.port || parseInt(data.port, 10) || 5439;
+        const database = parsed.database || data.database || 'ducklake_catalog';
+        const user = parsed.user || data.user || 'postgres';
+        const password = parsed.password !== undefined ? parsed.password : (data.password || '');
+
+        await setConfig('postgres.connectionString', connStr);
+        await setConfig('postgres.host', host);
+        await setConfig('postgres.port', port);
+        await setConfig('postgres.database', database);
+        await setConfig('postgres.user', user);
+        await setConfig('postgres.password', password);
+        await setConfig('postgres.ssl', !!data.ssl);
       }
 
       // Refresh catalog with new parameters
@@ -280,13 +295,15 @@ con.sql("SHOW TABLES;").show()
 
   private getHtmlContent(config: PostgresConfig): string {
     const connName = config.connectionName || 'lake';
-    const catalogConn =
-      config.connectionString && config.connectionString.trim().length > 0
-        ? config.connectionString
-        : `postgres:host=${config.host || 'localhost'} port=${config.port || 5439} dbname=${config.database || 'ducklake_catalog'} user=${config.user || 'postgres'} password=${config.password || 'ducklake123'}`;
+    const isLocal = config.catalogType === 'local';
+    const catalogConn = isLocal
+      ? (config.duckdbDatabasePath || '')
+      : (config.connectionString && config.connectionString.trim().length > 0
+          ? config.connectionString
+          : `postgres:host=${config.host || 'localhost'} port=${config.port || 5439} dbname=${config.database || 'ducklake_catalog'} user=${config.user || 'postgres'} password=${config.password || ''}`);
 
-    const dataPath = config.dataPath || 'C:\\Users\\theze\\.gemini\\antigravity\\scratch\\ducklake-mockup\\data';
-    const overrideDataPath = config.overrideDataPath !== undefined ? config.overrideDataPath : true;
+    const dataPath = config.dataPath || '';
+    const overrideDataPath = config.overrideDataPath !== undefined ? config.overrideDataPath : false;
     const databaseAlias = config.databaseAlias || 'lake';
 
     return /* html */ `
@@ -808,21 +825,21 @@ con.sql("SHOW TABLES;").show()
     <div class="field-group">
       <div class="field-label">Catalog Type <span class="req-star">*</span></div>
       <div class="segmented-control" id="catalogTypeSeg">
-        <button class="segmented-btn active" data-val="server">Database Server (PostgreSQL)</button>
-        <button class="segmented-btn" data-val="local">Local DuckDB File (.duckdb)</button>
+        <button class="segmented-btn ${isLocal ? '' : 'active'}" data-val="server">Database Server (PostgreSQL)</button>
+        <button class="segmented-btn ${isLocal ? 'active' : ''}" data-val="local">Local DuckDB File (.duckdb)</button>
       </div>
-      <div class="sub-hint" id="catalogTypeHint">PostgreSQL catalog metadata backend (DuckLake metastore tables)</div>
+      <div class="sub-hint" id="catalogTypeHint">${isLocal ? 'Local DuckDB database file (.duckdb)' : 'PostgreSQL catalog metadata backend (DuckLake metastore tables)'}</div>
     </div>
 
     <!-- Catalog Connection -->
     <div class="field-group">
       <div class="field-label">
-        <span id="connLabelText">Catalog Connection</span> <span class="req-star">*</span>
+        <span id="connLabelText">${isLocal ? 'DuckDB Database Path' : 'Catalog Connection'}</span> <span class="req-star">*</span>
         <span class="info-icon" title="PostgreSQL connection string or local .duckdb file path">ℹ</span>
       </div>
       <div class="input-action-row">
-        <input type="text" id="catalogConn" value="${catalogConn}" placeholder="postgres:host=localhost port=5439 dbname=ducklake_catalog user=postgres password=..." />
-        <button class="btn-action-side" id="btnBrowseCatalog" title="Configure details or browse database file">Browse</button>
+        <input type="text" id="catalogConn" value="${catalogConn}" placeholder="${isLocal ? 'C:\\path\\to\\my_lake.duckdb' : 'postgres:host=localhost port=5439 dbname=ducklake_catalog user=postgres password=...'}" />
+        <button class="btn-action-side" id="btnBrowseCatalog" title="Configure details or browse database file">${isLocal ? 'Browse File' : 'Parameters'}</button>
       </div>
     </div>
 
@@ -861,7 +878,7 @@ con.sql("SHOW TABLES;").show()
     </div>
 
     <!-- Advanced Settings Accordion -->
-    <div class="accordion-header" id="accToggle">
+    <div class="accordion-header" id="accToggle" style="display: ${isLocal ? 'none' : 'flex'};">
       <span>⚙️ Connection Parameters (Host, Port, Database, User, Password)</span>
       <span id="accChevron">▼</span>
     </div>
@@ -967,7 +984,7 @@ con.sql("SHOW TABLES;").show()
     });
 
     // Segmented buttons - Catalog Type
-    let selectedCatalogType = 'server';
+    let selectedCatalogType = '${isLocal ? 'local' : 'server'}';
     document.querySelectorAll('#catalogTypeSeg .segmented-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         document.querySelectorAll('#catalogTypeSeg .segmented-btn').forEach(b => b.classList.remove('active'));

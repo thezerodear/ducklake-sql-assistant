@@ -58,8 +58,45 @@ export class PostgresCatalogClient {
     return result;
   }
 
+  private async configureEncoding(client: Client): Promise<string> {
+    const desired = this.config.clientEncoding?.trim();
+    if (desired && desired.toLowerCase() !== 'auto') {
+      try {
+        await client.query(`SET client_encoding = '${desired}';`);
+        return desired;
+      } catch (err) {
+        console.warn(`DuckLake: Custom client_encoding '${desired}' failed:`, err);
+      }
+    }
+
+    // Auto strategy:
+    // 1. Try UTF8 first (the universal standard supporting Thai WIN874, CJK, Latin, Cyrillic, Emoji, etc.)
+    try {
+      await client.query("SET client_encoding = 'UTF8';");
+      return 'UTF8';
+    } catch (utf8Err) {
+      // 2. If server cannot convert to UTF8, detect server_encoding and match it natively
+      try {
+        const res = await client.query('SHOW server_encoding;');
+        const serverEnc = res.rows[0]?.server_encoding;
+        if (serverEnc) {
+          await client.query(`SET client_encoding = '${serverEnc}';`);
+          return serverEnc;
+        }
+      } catch (_) {
+        // ignore
+      }
+      return 'default';
+    }
+  }
+
   private createClient(): Client {
-    process.env.PGCLIENTENCODING = 'UTF8';
+    const enc = this.config.clientEncoding && this.config.clientEncoding.toLowerCase() !== 'auto'
+      ? this.config.clientEncoding
+      : 'UTF8';
+    process.env.PGCLIENTENCODING = enc;
+    const clientOptions = `-c client_encoding=${enc}`;
+
     const rawConnStr = this.config.connectionString?.trim();
     if (rawConnStr) {
       if (rawConnStr.startsWith('postgresql://') || rawConnStr.startsWith('postgres://')) {
@@ -67,7 +104,7 @@ export class PostgresCatalogClient {
           connectionString: rawConnStr,
           ssl: this.config.ssl ? { rejectUnauthorized: false } : false,
           connectionTimeoutMillis: 5000,
-          options: '-c client_encoding=UTF8'
+          options: clientOptions
         });
       }
 
@@ -82,7 +119,7 @@ export class PostgresCatalogClient {
           password: parsed.password || this.config.password,
           ssl: this.config.ssl ? { rejectUnauthorized: false } : false,
           connectionTimeoutMillis: 5000,
-          options: '-c client_encoding=UTF8'
+          options: clientOptions
         });
       }
 
@@ -90,7 +127,7 @@ export class PostgresCatalogClient {
         connectionString: rawConnStr,
         ssl: this.config.ssl ? { rejectUnauthorized: false } : false,
         connectionTimeoutMillis: 5000,
-        options: '-c client_encoding=UTF8'
+        options: clientOptions
       });
     }
 
@@ -102,7 +139,7 @@ export class PostgresCatalogClient {
       password: this.config.password,
       ssl: this.config.ssl ? { rejectUnauthorized: false } : false,
       connectionTimeoutMillis: 5000,
-      options: '-c client_encoding=UTF8'
+      options: clientOptions
     };
 
     return new Client(clientConfig);
@@ -112,8 +149,7 @@ export class PostgresCatalogClient {
     const client = this.createClient();
     try {
       await client.connect();
-      // Ensure client encoding is strictly UTF-8 (prevents WIN874 collation & conversion errors)
-      await client.query("SET client_encoding = 'UTF8';");
+      const usedEncoding = await this.configureEncoding(client);
       const res = await client.query('SELECT version();');
 
       // Check if DuckLake metastore is detected
@@ -129,7 +165,7 @@ export class PostgresCatalogClient {
       await client.end();
       return {
         success: true,
-        message: `Successfully connected to PostgreSQL!${extra}`,
+        message: `Successfully connected to PostgreSQL (${usedEncoding})!${extra}`,
         version: res.rows[0]?.version
       };
     } catch (err: any) {
@@ -149,8 +185,7 @@ export class PostgresCatalogClient {
     const client = this.createClient();
     try {
       await client.connect();
-      // Force UTF8 client encoding on active session
-      await client.query("SET client_encoding = 'UTF8';");
+      await this.configureEncoding(client);
 
       const tables: TableMetadata[] = [];
       const tablesMap = new Map<string, TableMetadata>();
