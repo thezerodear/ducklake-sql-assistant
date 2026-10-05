@@ -218,42 +218,53 @@ con.sql("SHOW TABLES;").show()
   }
 
   private async handleSave(data: any): Promise<void> {
-    const config = vscode.workspace.getConfiguration('ducklake');
-    const connStr = data.catalogConnection?.trim() || data.connectionString?.trim() || '';
-    const parsed = PostgresCatalogClient.parseConnString(connStr);
+    try {
+      const config = vscode.workspace.getConfiguration('ducklake');
+      const connStr = data.catalogConnection?.trim() || data.connectionString?.trim() || '';
+      const parsed = PostgresCatalogClient.parseConnString(connStr);
 
-    const host = parsed.host || data.host || 'localhost';
-    const port = parsed.port || parseInt(data.port, 10) || 5439;
-    const database = parsed.database || data.database || 'ducklake_catalog';
-    const user = parsed.user || data.user || 'postgres';
-    const password = parsed.password !== undefined ? parsed.password : (data.password || '');
+      const host = parsed.host || data.host || 'localhost';
+      const port = parsed.port || parseInt(data.port, 10) || 5439;
+      const database = parsed.database || data.database || 'ducklake_catalog';
+      const user = parsed.user || data.user || 'postgres';
+      const password = parsed.password !== undefined ? parsed.password : (data.password || '');
 
-    const target = vscode.workspace.workspaceFolders
-      ? vscode.ConfigurationTarget.Workspace
-      : vscode.ConfigurationTarget.Global;
+      const target = vscode.workspace.workspaceFolders
+        ? vscode.ConfigurationTarget.Workspace
+        : vscode.ConfigurationTarget.Global;
 
-    await config.update('connectionName', data.connectionName || 'lake', target);
-    await config.update('catalogType', data.catalogType || 'server', target);
-    await config.update('postgres.connectionString', connStr, target);
-    await config.update('postgres.host', host, target);
-    await config.update('postgres.port', port, target);
-    await config.update('postgres.database', database, target);
-    await config.update('postgres.user', user, target);
-    await config.update('postgres.password', password, target);
-    await config.update('postgres.ssl', !!data.ssl, target);
-    await config.update('dataPath', data.dataPath || '', target);
-    await config.update('overrideDataPath', !!data.overrideDataPath, target);
-    await config.update('databaseAlias', data.databaseAlias || 'lake', target);
+      await config.update('connectionName', data.connectionName || 'lake', target);
+      await config.update('catalogType', data.catalogType || 'server', target);
+      await config.update('catalog', data.databaseAlias || data.connectionName || 'lake', target);
+      await config.update('postgres.connectionString', connStr, target);
+      await config.update('postgres.host', host, target);
+      await config.update('postgres.port', port, target);
+      await config.update('postgres.database', database, target);
+      await config.update('postgres.user', user, target);
+      await config.update('postgres.password', password, target);
+      await config.update('postgres.ssl', !!data.ssl, target);
+      await config.update('dataPath', data.dataPath || '', target);
+      await config.update('overrideDataPath', !!data.overrideDataPath, target);
+      await config.update('databaseAlias', data.databaseAlias || 'lake', target);
 
-    if (data.catalogType === 'local') {
-      await config.update('duckdb.databasePath', data.catalogConnection || '', target);
+      if (data.catalogType === 'local') {
+        await config.update('duckdb.databasePath', data.catalogConnection || '', target);
+      }
+
+      // Refresh catalog with new parameters
+      await this.schemaManager.refreshCatalog(false);
+
+      vscode.window.showInformationMessage(`DuckLake: Connection "${data.connectionName || 'lake'}" saved & catalog synchronized!`);
+      this.panel.dispose();
+    } catch (err: any) {
+      const errMsg = err?.message || String(err);
+      vscode.window.showErrorMessage(`DuckLake: Failed to save settings: ${errMsg}`);
+      this.panel.webview.postMessage({
+        command: 'testResult',
+        success: false,
+        message: `Save error: ${errMsg}`
+      });
     }
-
-    // Refresh catalog with new parameters
-    await this.schemaManager.refreshCatalog(false);
-
-    vscode.window.showInformationMessage(`DuckLake: Connection "${data.connectionName || 'lake'}" saved & catalog synchronized!`);
-    this.panel.dispose();
   }
 
   public dispose() {

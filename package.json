@@ -2,7 +2,7 @@
   "name": "ducklake-sql-assistant",
   "displayName": "DuckLake SQL Assistant",
   "description": "SQL Syntax Highlighting, Smart Autocomplete, Sidebar Catalog Explorer, and Postgres/DuckDB Catalog Autosuggestion inside Python & Jupyter Notebook triple quotes for DuckLake / DuckDB.",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "author": "takdanai.mp",
   "publisher": "takdanai-mp",
   "license": "MIT",
@@ -129,7 +129,7 @@
       "view/item/context": [
         {
           "command": "ducklake.insertSelectQuery",
-          "when": "view == ducklakeCatalogView && viewItem == table",
+          "when": "view == ducklakeCatalogView && (viewItem == table || viewItem == view)",
           "group": "inline"
         },
         {
@@ -245,6 +245,20 @@
           "type": "string",
           "default": "lake",
           "description": "Alias name for the attached DuckLake catalog."
+        },
+        "ducklake.catalogType": {
+          "type": "string",
+          "default": "server",
+          "enum": [
+            "server",
+            "local"
+          ],
+          "description": "Catalog type: 'server' for PostgreSQL metastore or 'local' for local DuckDB file."
+        },
+        "ducklake.catalog": {
+          "type": "string",
+          "default": "",
+          "description": "DuckLake catalog name or identifier."
         }
       }
     }

@@ -1,6 +1,9 @@
 import { Client, ClientConfig } from 'pg';
 import { TableMetadata, ColumnMetadata, PostgresConfig } from './types';
 
+// Force PostgreSQL client protocol to use UTF-8 across all platforms, preventing WIN874 / CP874 mismatch
+process.env.PGCLIENTENCODING = 'UTF8';
+
 export class PostgresCatalogClient {
   private config: PostgresConfig;
 
@@ -56,13 +59,15 @@ export class PostgresCatalogClient {
   }
 
   private createClient(): Client {
+    process.env.PGCLIENTENCODING = 'UTF8';
     const rawConnStr = this.config.connectionString?.trim();
     if (rawConnStr) {
       if (rawConnStr.startsWith('postgresql://') || rawConnStr.startsWith('postgres://')) {
         return new Client({
           connectionString: rawConnStr,
           ssl: this.config.ssl ? { rejectUnauthorized: false } : false,
-          connectionTimeoutMillis: 5000
+          connectionTimeoutMillis: 5000,
+          options: '-c client_encoding=UTF8'
         });
       }
 
@@ -76,14 +81,16 @@ export class PostgresCatalogClient {
           user: parsed.user || this.config.user,
           password: parsed.password || this.config.password,
           ssl: this.config.ssl ? { rejectUnauthorized: false } : false,
-          connectionTimeoutMillis: 5000
+          connectionTimeoutMillis: 5000,
+          options: '-c client_encoding=UTF8'
         });
       }
 
       return new Client({
         connectionString: rawConnStr,
         ssl: this.config.ssl ? { rejectUnauthorized: false } : false,
-        connectionTimeoutMillis: 5000
+        connectionTimeoutMillis: 5000,
+        options: '-c client_encoding=UTF8'
       });
     }
 
@@ -94,7 +101,8 @@ export class PostgresCatalogClient {
       user: this.config.user,
       password: this.config.password,
       ssl: this.config.ssl ? { rejectUnauthorized: false } : false,
-      connectionTimeoutMillis: 5000
+      connectionTimeoutMillis: 5000,
+      options: '-c client_encoding=UTF8'
     };
 
     return new Client(clientConfig);
@@ -104,6 +112,8 @@ export class PostgresCatalogClient {
     const client = this.createClient();
     try {
       await client.connect();
+      // Ensure client encoding is strictly UTF-8 (prevents WIN874 collation & conversion errors)
+      await client.query("SET client_encoding = 'UTF8';");
       const res = await client.query('SELECT version();');
 
       // Check if DuckLake metastore is detected
@@ -139,13 +149,18 @@ export class PostgresCatalogClient {
     const client = this.createClient();
     try {
       await client.connect();
+      // Force UTF8 client encoding on active session
+      await client.query("SET client_encoding = 'UTF8';");
+
+      const tables: TableMetadata[] = [];
+      const tablesMap = new Map<string, TableMetadata>();
 
       // Check if DuckLake metastore tables exist in PostgreSQL
       const ducklakeCheck = await client.query("SELECT to_regclass('public.ducklake_table') as has_ducklake;");
       const hasDuckLake = !!ducklakeCheck.rows[0]?.has_ducklake;
 
       if (hasDuckLake) {
-        // 🦆 1. NATIVE DUCKLAKE METASTORE PARSING
+        // 🦆 1. NATIVE DUCKLAKE METASTORE PARSING (TABLES)
         const tablesQuery = `
           SELECT 
             s.schema_name,
@@ -182,8 +197,6 @@ export class PostgresCatalogClient {
           client.query(columnsQuery)
         ]);
 
-        await client.end();
-
         const columnsByTable = new Map<string, ColumnMetadata[]>();
         for (const row of columnsResult.rows) {
           const tableKey = `${row.schema_name}.${row.table_name}`;
@@ -200,97 +213,148 @@ export class PostgresCatalogClient {
           });
         }
 
-        const tables: TableMetadata[] = [];
         for (const row of tablesResult.rows) {
           const tableKey = `${row.schema_name}.${row.table_name}`;
           const cols = columnsByTable.get(tableKey) || [];
 
-          tables.push({
+          const tMeta: TableMetadata = {
             schema: row.schema_name,
             name: row.table_name,
-            fullName: `${row.schema_name}.${row.table_name}`,
+            fullName: tableKey,
             type: row.table_type,
             columns: cols,
             comment: row.table_comment ?? undefined,
             rowCount: row.record_count != null ? parseInt(row.record_count, 10) : undefined,
             fileSizeBytes: row.file_size_bytes != null ? parseInt(row.file_size_bytes, 10) : undefined
+          };
+          tablesMap.set(tableKey, tMeta);
+          tables.push(tMeta);
+        }
+
+        // 🦆 1b. DUCKLAKE METASTORE VIEWS (if ducklake_view table exists)
+        try {
+          const viewCheck = await client.query("SELECT to_regclass('public.ducklake_view') as has_view;");
+          if (viewCheck.rows[0]?.has_view) {
+            const viewsQuery = `
+              SELECT 
+                s.schema_name,
+                v.view_name AS table_name,
+                'VIEW' AS table_type,
+                'DuckLake view' AS table_comment,
+                v.sql AS view_definition
+              FROM ducklake_view v
+              JOIN ducklake_schema s ON v.schema_id = s.schema_id
+              WHERE v.end_snapshot IS NULL
+              ORDER BY s.schema_name, v.view_name;
+            `;
+            const viewsResult = await client.query(viewsQuery);
+            for (const row of viewsResult.rows) {
+              const tableKey = `${row.schema_name}.${row.table_name}`;
+              if (!tablesMap.has(tableKey)) {
+                const vMeta: TableMetadata = {
+                  schema: row.schema_name,
+                  name: row.table_name,
+                  fullName: tableKey,
+                  type: 'VIEW',
+                  columns: [],
+                  comment: row.table_comment ?? undefined,
+                  viewDefinition: row.view_definition ?? undefined
+                };
+                tablesMap.set(tableKey, vMeta);
+                tables.push(vMeta);
+              }
+            }
+          }
+        } catch {
+          // ignore if ducklake_view table doesn't exist
+        }
+      }
+
+      // 🐘 2. POSTGRESQL TABLES & VIEWS ACROSS ALL SCHEMAS (e.g. public, analytics, staging, etc.)
+      try {
+        const pgTablesQuery = `
+          SELECT 
+            t.table_schema,
+            t.table_name,
+            t.table_type,
+            obj_description(pgc.oid, 'pg_class') as table_comment
+          FROM information_schema.tables t
+          LEFT JOIN pg_catalog.pg_class pgc 
+            ON pgc.relname = t.table_name
+            AND pgc.relnamespace = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = t.table_schema)
+          WHERE t.table_schema NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+            AND t.table_name NOT LIKE 'ducklake_%'
+          ORDER BY t.table_schema, t.table_name;
+        `;
+
+        const pgColumnsQuery = `
+          SELECT 
+            c.table_schema,
+            c.table_name,
+            c.column_name,
+            c.data_type,
+            c.is_nullable,
+            c.column_default,
+            col_description(pgc.oid, c.ordinal_position) as column_comment
+          FROM information_schema.columns c
+          LEFT JOIN pg_catalog.pg_class pgc 
+            ON pgc.relname = c.table_name
+            AND pgc.relnamespace = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = c.table_schema)
+          WHERE c.table_schema NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+            AND c.table_name NOT LIKE 'ducklake_%'
+          ORDER BY c.table_schema, c.table_name, c.ordinal_position;
+        `;
+
+        const [pgTablesRes, pgColumnsRes] = await Promise.all([
+          client.query(pgTablesQuery),
+          client.query(pgColumnsQuery)
+        ]);
+
+        const pgColsByTable = new Map<string, ColumnMetadata[]>();
+        for (const row of pgColumnsRes.rows) {
+          const key = `${row.table_schema}.${row.table_name}`;
+          if (!pgColsByTable.has(key)) {
+            pgColsByTable.set(key, []);
+          }
+          pgColsByTable.get(key)!.push({
+            name: row.column_name,
+            dataType: row.data_type,
+            isNullable: row.is_nullable === 'YES',
+            defaultValue: row.column_default ?? undefined,
+            comment: row.column_comment ?? undefined
           });
         }
 
-        return tables;
-      }
+        for (const row of pgTablesRes.rows) {
+          const key = `${row.table_schema}.${row.table_name}`;
+          const isViewType = row.table_type === 'VIEW' || row.table_type === 'MATERIALIZED VIEW';
+          const typeStr = isViewType ? 'VIEW' : (row.table_type || 'BASE TABLE');
 
-      // 🐘 2. STANDARD POSTGRESQL SCHEMA PARSING
-      const schemas = this.config.catalogSchemas.length > 0 ? this.config.catalogSchemas : ['public'];
-      const schemaPlaceholders = schemas.map((_, i) => `$${i + 1}`).join(', ');
-
-      const tablesQuery = `
-        SELECT 
-          t.table_schema,
-          t.table_name,
-          t.table_type,
-          obj_description(pgc.oid, 'pg_class') as table_comment
-        FROM information_schema.tables t
-        LEFT JOIN pg_catalog.pg_class pgc 
-          ON pgc.relname = t.table_name
-          AND pgc.relnamespace = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = t.table_schema)
-        WHERE t.table_schema IN (${schemaPlaceholders})
-        ORDER BY t.table_schema, t.table_name;
-      `;
-
-      const tablesResult = await client.query(tablesQuery, schemas);
-
-      const columnsQuery = `
-        SELECT 
-          c.table_schema,
-          c.table_name,
-          c.column_name,
-          c.data_type,
-          c.is_nullable,
-          c.column_default,
-          col_description(pgc.oid, c.ordinal_position) as column_comment
-        FROM information_schema.columns c
-        LEFT JOIN pg_catalog.pg_class pgc 
-          ON pgc.relname = c.table_name
-          AND pgc.relnamespace = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = c.table_schema)
-        WHERE c.table_schema IN (${schemaPlaceholders})
-        ORDER BY c.table_schema, c.table_name, c.ordinal_position;
-      `;
-
-      const columnsResult = await client.query(columnsQuery, schemas);
-      await client.end();
-
-      const columnsByTable = new Map<string, ColumnMetadata[]>();
-      for (const row of columnsResult.rows) {
-        const tableKey = `${row.table_schema}.${row.table_name}`;
-        if (!columnsByTable.has(tableKey)) {
-          columnsByTable.set(tableKey, []);
+          if (!tablesMap.has(key)) {
+            const cols = pgColsByTable.get(key) || [];
+            const meta: TableMetadata = {
+              schema: row.table_schema,
+              name: row.table_name,
+              fullName: key,
+              type: typeStr,
+              columns: cols,
+              comment: row.table_comment ?? undefined
+            };
+            tablesMap.set(key, meta);
+            tables.push(meta);
+          } else {
+            // If already in map but missing columns, fill in from pg columns
+            const existing = tablesMap.get(key)!;
+            if (existing.columns.length === 0 && pgColsByTable.has(key)) {
+              existing.columns = pgColsByTable.get(key)!;
+            }
+          }
         }
-
-        columnsByTable.get(tableKey)!.push({
-          name: row.column_name,
-          dataType: row.data_type,
-          isNullable: row.is_nullable === 'YES',
-          defaultValue: row.column_default ?? undefined,
-          comment: row.column_comment ?? undefined
-        });
+      } catch (pgErr) {
+        console.error('Error fetching PostgreSQL tables/views:', pgErr);
       }
 
-      const tables: TableMetadata[] = [];
-      for (const row of tablesResult.rows) {
-        const tableKey = `${row.table_schema}.${row.table_name}`;
-        const cols = columnsByTable.get(tableKey) || [];
-
-        tables.push({
-          schema: row.table_schema,
-          name: row.table_name,
-          fullName: `${row.table_schema}.${row.table_name}`,
-          type: row.table_type,
-          columns: cols,
-          comment: row.table_comment ?? undefined
-        });
-      }
-
+      await client.end();
       return tables;
     } catch (err: any) {
       try {
@@ -345,6 +409,18 @@ export class PostgresCatalogClient {
           { name: 'quantity', dataType: 'int32', isNullable: false },
           { name: 'order_date', dataType: 'date', isNullable: false },
           { name: 'status', dataType: 'varchar', isNullable: false }
+        ]
+      },
+      {
+        schema: 'main',
+        name: 'customer_order_summary',
+        fullName: 'main.customer_order_summary',
+        type: 'VIEW',
+        comment: 'Aggregated order statistics by customer',
+        columns: [
+          { name: 'customer_id', dataType: 'int32', isNullable: false },
+          { name: 'total_orders', dataType: 'int64', isNullable: true },
+          { name: 'total_spent', dataType: 'decimal(12,2)', isNullable: true }
         ]
       }
     ];

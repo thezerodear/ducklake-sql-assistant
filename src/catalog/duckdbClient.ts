@@ -89,7 +89,8 @@ export class DuckDBLocalClient {
 
   private static runDuckDBQuery(exe: string, dbPath: string, sql: string): Promise<string> {
     return new Promise((resolve, reject) => {
-      execFile(exe, [dbPath, '-json', sql], (err, stdout, stderr) => {
+      const env = { ...process.env, PYTHONIOENCODING: 'utf-8', LC_ALL: 'en_US.UTF-8' };
+      execFile(exe, [dbPath, '-json', sql], { env, encoding: 'utf8' }, (err, stdout, stderr) => {
         if (err) {
           reject(new Error(stderr || err.message));
         } else {
@@ -102,6 +103,8 @@ export class DuckDBLocalClient {
   private static runPythonDuckDBQuery(dbPath: string, sql: string): Promise<string> {
     const pythonScript = `
 import duckdb, json, sys
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
 try:
     con = duckdb.connect(sys.argv[1], read_only=True)
     df = con.sql(sys.argv[2]).df()
@@ -123,7 +126,8 @@ except Exception as e:
         }
 
         const pyExe = candidates[idx];
-        execFile(pyExe, ['-c', pythonScript, dbPath, sql], (err, stdout, stderr) => {
+        const env = { ...process.env, PYTHONIOENCODING: 'utf-8', LC_ALL: 'en_US.UTF-8' };
+        execFile(pyExe, ['-c', pythonScript, dbPath, sql], { env, encoding: 'utf8' }, (err, stdout, stderr) => {
           if (err) {
             lastErr = new Error(stderr || err.message);
             tryNext(idx + 1);

@@ -57,11 +57,13 @@ export class DuckLakeHoverProvider implements vscode.HoverProvider {
       }
     }
 
-    // 2. Check if hovering over a Table Name
     const table = this.schemaManager.findTable(word);
     if (table) {
       const md = new vscode.MarkdownString();
-      md.appendMarkdown(`### 🦆 DuckLake Table: \`${table.fullName}\`\n\n`);
+      const isView = (table.type || '').toUpperCase().includes('VIEW');
+      const icon = isView ? '👁️' : '🦆';
+      const label = isView ? 'DuckLake / Postgres View' : 'DuckLake Table';
+      md.appendMarkdown(`### ${icon} ${label}: \`${table.fullName}\`\n\n`);
       md.appendMarkdown(`**Type:** ${table.type}  \n`);
       if (table.comment) {
         md.appendMarkdown(`**Description:** ${table.comment}  \n\n`);

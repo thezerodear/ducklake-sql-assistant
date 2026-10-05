@@ -21,8 +21,8 @@ export class SchemaManager implements vscode.Disposable {
     };
 
     // Load initial schema
-    this.refreshCatalog(true).catch(() => {
-      this.loadSampleSchema();
+    this.refreshCatalog(true).catch((err) => {
+      console.error('DuckLake: Initial schema refresh error:', err);
     });
   }
 
@@ -31,8 +31,8 @@ export class SchemaManager implements vscode.Disposable {
     return {
       connectionString: conf.get<string>('postgres.connectionString', ''),
       host: conf.get<string>('postgres.host', 'localhost'),
-      port: conf.get<number>('postgres.port', 5432),
-      database: conf.get<string>('postgres.database', 'postgres'),
+      port: conf.get<number>('postgres.port', 5439),
+      database: conf.get<string>('postgres.database', 'ducklake_catalog'),
       user: conf.get<string>('postgres.user', 'postgres'),
       password: conf.get<string>('postgres.password', ''),
       ssl: conf.get<boolean>('postgres.ssl', false),
@@ -44,6 +44,7 @@ export class SchemaManager implements vscode.Disposable {
       alwaysEnableInTripleQuotes: conf.get<boolean>('alwaysEnableInTripleQuotes', true),
       connectionName: conf.get<string>('connectionName', 'lake'),
       catalogType: conf.get<string>('catalogType', 'server'),
+      catalog: conf.get<string>('catalog', ''),
       dataStorage: conf.get<string>('dataStorage', 'local'),
       dataPath: conf.get<string>('dataPath', ''),
       overrideDataPath: conf.get<boolean>('overrideDataPath', false),
@@ -146,42 +147,60 @@ export class SchemaManager implements vscode.Disposable {
     const config = this.readConfig();
     this.client.updateConfig(config);
 
-    // 1. Try PostgreSQL Catalog if connection is configured
+    // 1. Try PostgreSQL Catalog if connection is configured (or catalogType === 'server')
     const hasPgConfig = (config.connectionString && config.connectionString.trim().length > 0) ||
                         (config.host && config.password && config.database && config.user);
 
-    if (hasPgConfig) {
+    if (config.catalogType !== 'local' && hasPgConfig) {
       this.state.status = 'connecting';
       this.onDidChangeSchemaEmitter.fire(this.state);
       try {
         const tables = await this.client.fetchCatalog();
         this.setTables(tables, 'connected');
         if (!silent) {
-          vscode.window.showInformationMessage(`DuckLake: Synced ${tables.length} tables from PostgreSQL catalog!`);
+          vscode.window.showInformationMessage(`DuckLake: Synced ${tables.length} tables/views from PostgreSQL catalog!`);
         }
         this.setupAutoRefresh(config.autoRefreshMinutes);
         return;
       } catch (err: any) {
-        console.error('Postgres catalog fetch error:', err);
+        const errorMsg = err?.message || String(err);
+        console.error('DuckLake: Postgres catalog fetch error:', err);
+        // Show actual error and halt before fallback
+        this.setTables([], 'error', errorMsg);
+        vscode.window.showErrorMessage(`DuckLake: Failed to connect to PostgreSQL catalog: ${errorMsg}`);
+        return; // STOP! Do not silently fallback to sample catalog
       }
     }
 
-    // 2. Try Local DuckDB file if available
-    const localDuckDB = this.findLocalDuckDBFile();
-    if (localDuckDB) {
-      try {
-        const tables = await DuckDBLocalClient.fetchCatalog(localDuckDB);
-        this.setTables(tables, 'connected');
+    // 2. Try Local DuckDB file if configured (or catalogType === 'local')
+    if (config.catalogType === 'local') {
+      const localDuckDB = this.findLocalDuckDBFile();
+      if (localDuckDB) {
+        try {
+          const tables = await DuckDBLocalClient.fetchCatalog(localDuckDB);
+          this.setTables(tables, 'connected');
+          if (!silent) {
+            vscode.window.showInformationMessage(`DuckLake: Loaded ${tables.length} tables from DuckDB (${path.basename(localDuckDB)})!`);
+          }
+          return;
+        } catch (err: any) {
+          const errorMsg = err?.message || String(err);
+          console.error('DuckLake: DuckDB local fetch error:', err);
+          this.setTables([], 'error', errorMsg);
+          vscode.window.showErrorMessage(`DuckLake: Failed to load local DuckDB file: ${errorMsg}`);
+          return; // STOP!
+        }
+      } else {
+        const errorMsg = 'Local DuckDB database file not found. Please configure path in connection settings.';
+        this.setTables([], 'error', errorMsg);
         if (!silent) {
-          vscode.window.showInformationMessage(`DuckLake: Loaded ${tables.length} tables from DuckDB (${path.basename(localDuckDB)})!`);
+          vscode.window.showErrorMessage(`DuckLake: ${errorMsg}`);
         }
         return;
-      } catch (err: any) {
-        console.error('DuckDB local fetch error:', err);
       }
     }
 
-    // 3. Fallback to sample catalog
+    // 3. Fallback to sample catalog ONLY if nothing is configured
     this.loadSampleSchema();
     if (!silent) {
       vscode.window.showInformationMessage('DuckLake: Using sample catalog. Connect Postgres or specify a local DuckDB file in settings.');
@@ -192,20 +211,26 @@ export class SchemaManager implements vscode.Disposable {
 
   public async testConnection(): Promise<{ success: boolean; message: string }> {
     const config = this.readConfig();
-    const localDuckDB = this.findLocalDuckDBFile();
-    if (localDuckDB) {
-      try {
-        const tables = await DuckDBLocalClient.fetchCatalog(localDuckDB);
-        return {
-          success: true,
-          message: `Successfully connected to DuckDB: ${localDuckDB} (${tables.length} tables)`
-        };
-      } catch (err: any) {
-        return {
-          success: false,
-          message: `DuckDB query failed: ${err.message}`
-        };
+    if (config.catalogType === 'local') {
+      const localDuckDB = this.findLocalDuckDBFile();
+      if (localDuckDB) {
+        try {
+          const tables = await DuckDBLocalClient.fetchCatalog(localDuckDB);
+          return {
+            success: true,
+            message: `Successfully connected to DuckDB: ${localDuckDB} (${tables.length} tables)`
+          };
+        } catch (err: any) {
+          return {
+            success: false,
+            message: `DuckDB query failed: ${err.message}`
+          };
+        }
       }
+      return {
+        success: false,
+        message: 'No local DuckDB database file found.'
+      };
     }
 
     this.client.updateConfig(config);

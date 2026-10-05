@@ -15,6 +15,7 @@ export interface TableMetadata {
   comment?: string;
   rowCount?: number;
   fileSizeBytes?: number;
+  viewDefinition?: string;
 }
 
 export interface PostgresConfig {
@@ -33,6 +34,7 @@ export interface PostgresConfig {
   alwaysEnableInTripleQuotes: boolean;
   connectionName?: string;
   catalogType?: string;
+  catalog?: string;
   dataStorage?: string;
   dataPath?: string;
   overrideDataPath?: boolean;

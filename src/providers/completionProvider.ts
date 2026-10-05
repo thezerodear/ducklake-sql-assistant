@@ -101,15 +101,17 @@ export class DuckLakeCompletionProvider implements vscode.CompletionItemProvider
   }
 
   private createTableCompletionItem(table: TableMetadata, sortPrefix: string, range?: vscode.Range): vscode.CompletionItem {
-    const item = new vscode.CompletionItem(table.name, vscode.CompletionItemKind.Class);
-    item.detail = `DuckLake Table (${table.schema})`;
+    const isView = (table.type || '').toUpperCase().includes('VIEW');
+    const item = new vscode.CompletionItem(table.name, isView ? vscode.CompletionItemKind.Interface : vscode.CompletionItemKind.Class);
+    item.detail = `${isView ? 'DuckLake / Postgres View' : 'DuckLake Table'} (${table.schema})`;
     item.sortText = `${sortPrefix}${table.name}`;
     if (range) {
       item.range = range;
     }
 
     const md = new vscode.MarkdownString();
-    md.appendMarkdown(`### 🦆 \`${table.fullName}\`\n\n`);
+    const icon = isView ? '👁️' : '🦆';
+    md.appendMarkdown(`### ${icon} \`${table.fullName}\`\n\n`);
     md.appendMarkdown(`**Type:** ${table.type}  \n`);
     if (table.comment) {
       md.appendMarkdown(`**Description:** ${table.comment}  \n\n`);

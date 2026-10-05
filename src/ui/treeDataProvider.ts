@@ -8,8 +8,9 @@ export type NodeType =
   | 'schema'
   | 'tablesGroup'
   | 'table'
-  | 'column'
   | 'viewsGroup'
+  | 'view'
+  | 'column'
   | 'functionsGroup';
 
 export class CatalogTreeItem extends vscode.TreeItem {
@@ -33,7 +34,7 @@ export class CatalogTreeItem extends vscode.TreeItem {
     switch (this.nodeType) {
       case 'database':
         this.iconPath = new vscode.ThemeIcon('database', new vscode.ThemeColor('charts.blue'));
-        this.description = '0B, Default, Type: ducklake';
+        this.description = 'Default, Type: ducklake';
         break;
 
       case 'schemasGroup':
@@ -43,12 +44,17 @@ export class CatalogTreeItem extends vscode.TreeItem {
 
       case 'schema':
         this.iconPath = new vscode.ThemeIcon('folder-opened', new vscode.ThemeColor('charts.yellow'));
-        this.description = 'Default';
+        this.description = '';
         break;
 
       case 'tablesGroup':
         this.iconPath = new vscode.ThemeIcon('table');
-        this.description = this.metadata?.extra || '';
+        this.description = this.metadata?.extra || '0';
+        break;
+
+      case 'viewsGroup':
+        this.iconPath = new vscode.ThemeIcon('eye');
+        this.description = this.metadata?.extra || '0';
         break;
 
       case 'table':
@@ -57,6 +63,16 @@ export class CatalogTreeItem extends vscode.TreeItem {
           this.description = `${this.metadata.table.rowCount} rows`;
         }
         this.tooltip = `Table: ${this.metadata?.table?.fullName}\nType: ${this.metadata?.table?.type}\nColumns: ${this.metadata?.table?.columns.length}`;
+        break;
+
+      case 'view':
+        this.iconPath = new vscode.ThemeIcon('eye', new vscode.ThemeColor('charts.orange'));
+        if (this.metadata?.table?.rowCount != null) {
+          this.description = `${this.metadata.table.rowCount} rows`;
+        } else {
+          this.description = 'view';
+        }
+        this.tooltip = `View: ${this.metadata?.table?.fullName}\nType: VIEW\nColumns: ${this.metadata?.table?.columns.length}`;
         break;
 
       case 'column':
@@ -73,16 +89,16 @@ export class CatalogTreeItem extends vscode.TreeItem {
         };
         break;
 
-      case 'viewsGroup':
-        this.iconPath = new vscode.ThemeIcon('eye');
-        this.description = '0';
-        break;
-
       case 'functionsGroup':
         this.iconPath = new vscode.ThemeIcon('symbol-function');
         break;
     }
   }
+}
+
+interface SchemaGroup {
+  tables: TableMetadata[];
+  views: TableMetadata[];
 }
 
 export class DuckLakeTreeDataProvider implements vscode.TreeDataProvider<CatalogTreeItem> {
@@ -106,26 +122,33 @@ export class DuckLakeTreeDataProvider implements vscode.TreeDataProvider<Catalog
   }
 
   public async getChildren(element?: CatalogTreeItem): Promise<CatalogTreeItem[]> {
-    const tables = this.schemaManager.getTables();
+    const allItems = this.schemaManager.getTables();
+    const config = this.schemaManager.readConfig();
+    const dbAlias = config.databaseAlias || config.connectionName || 'lake';
 
-    // Group tables by schema
-    const schemasMap = new Map<string, TableMetadata[]>();
-    for (const t of tables) {
-      const s = t.schema || 'main';
+    // Group tables & views by schema
+    const schemasMap = new Map<string, SchemaGroup>();
+    for (const item of allItems) {
+      const s = item.schema || 'main';
       if (!schemasMap.has(s)) {
-        schemasMap.set(s, []);
+        schemasMap.set(s, { tables: [], views: [] });
       }
-      schemasMap.get(s)!.push(t);
+      const isView = (item.type || '').toUpperCase().includes('VIEW');
+      if (isView) {
+        schemasMap.get(s)!.views.push(item);
+      } else {
+        schemasMap.get(s)!.tables.push(item);
+      }
     }
 
     if (schemasMap.size === 0) {
-      schemasMap.set('main', []);
+      schemasMap.set('main', { tables: [], views: [] });
     }
 
-    // 1. Root Level -> Database node "lake"
+    // 1. Root Level -> Database node (e.g. "lake")
     if (!element) {
       return [
-        new CatalogTreeItem('lake', 'database', vscode.TreeItemCollapsibleState.Expanded)
+        new CatalogTreeItem(dbAlias, 'database', vscode.TreeItemCollapsibleState.Expanded)
       ];
     }
 
@@ -141,16 +164,17 @@ export class DuckLakeTreeDataProvider implements vscode.TreeDataProvider<Catalog
       ];
     }
 
-    // 3. Under Schemas folder -> Schema items (e.g. "main")
+    // 3. Under Schemas folder -> Schema items (e.g. "main", "public", etc.)
     if (element.nodeType === 'schemasGroup') {
       const schemaItems: CatalogTreeItem[] = [];
-      for (const [schemaName] of schemasMap) {
+      for (const [schemaName, group] of schemasMap) {
+        const totalItems = group.tables.length + group.views.length;
         schemaItems.push(
           new CatalogTreeItem(
             schemaName,
             'schema',
             vscode.TreeItemCollapsibleState.Expanded,
-            { schema: schemaName }
+            { schema: schemaName, extra: `${totalItems}` }
           )
         );
       }
@@ -160,24 +184,29 @@ export class DuckLakeTreeDataProvider implements vscode.TreeDataProvider<Catalog
     // 4. Under Schema -> Tables folder, Views folder, Functions folder
     if (element.nodeType === 'schema') {
       const schemaName = element.metadata?.schema || 'main';
-      const schemaTables = schemasMap.get(schemaName) || [];
+      const group = schemasMap.get(schemaName) || { tables: [], views: [] };
       return [
         new CatalogTreeItem(
           'Tables',
           'tablesGroup',
-          vscode.TreeItemCollapsibleState.Expanded,
-          { schema: schemaName, extra: `${schemaTables.length}` }
+          group.tables.length > 0 ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed,
+          { schema: schemaName, extra: `${group.tables.length}` }
         ),
-        new CatalogTreeItem('Views', 'viewsGroup', vscode.TreeItemCollapsibleState.Collapsed),
+        new CatalogTreeItem(
+          'Views',
+          'viewsGroup',
+          group.views.length > 0 ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed,
+          { schema: schemaName, extra: `${group.views.length}` }
+        ),
         new CatalogTreeItem('Functions', 'functionsGroup', vscode.TreeItemCollapsibleState.Collapsed)
       ];
     }
 
-    // 5. Under Tables folder -> Table items (e.g. "customers", "orders", "products")
+    // 5. Under Tables folder -> Table items
     if (element.nodeType === 'tablesGroup') {
       const schemaName = element.metadata?.schema || 'main';
-      const schemaTables = schemasMap.get(schemaName) || [];
-      return schemaTables.map(
+      const group = schemasMap.get(schemaName) || { tables: [], views: [] };
+      return group.tables.map(
         (t) =>
           new CatalogTreeItem(
             t.name,
@@ -188,8 +217,23 @@ export class DuckLakeTreeDataProvider implements vscode.TreeDataProvider<Catalog
       );
     }
 
-    // 6. Under Table -> Columns list
-    if (element.nodeType === 'table' && element.metadata?.table) {
+    // 5b. Under Views folder -> View items
+    if (element.nodeType === 'viewsGroup') {
+      const schemaName = element.metadata?.schema || 'main';
+      const group = schemasMap.get(schemaName) || { tables: [], views: [] };
+      return group.views.map(
+        (v) =>
+          new CatalogTreeItem(
+            v.name,
+            'view',
+            vscode.TreeItemCollapsibleState.Collapsed,
+            { table: v, schema: schemaName }
+          )
+      );
+    }
+
+    // 6. Under Table or View -> Columns list
+    if ((element.nodeType === 'table' || element.nodeType === 'view') && element.metadata?.table) {
       const cols = element.metadata.table.columns;
       return cols.map(
         (c) =>
