@@ -7,10 +7,13 @@ import { DuckLakeHoverProvider } from './providers/hoverProvider';
 import { DuckLakeStatusBar } from './ui/statusBar';
 import { DuckLakeTreeDataProvider, CatalogTreeItem } from './ui/treeDataProvider';
 import { DuckLakeConnectionWebview } from './ui/connectionWebview';
+import { ConfigStorage } from './catalog/configStorage';
 import { execFile } from 'child_process';
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('DuckLake SQL Assistant is activating...');
+
+  ConfigStorage.init(context.globalStorageUri, context);
 
   const schemaManager = new SchemaManager();
   const statusBar = new DuckLakeStatusBar(schemaManager);
@@ -83,6 +86,16 @@ export function activate(context: vscode.ExtensionContext) {
 
   const openModalCommand = vscode.commands.registerCommand('ducklake.openConnectionModal', () => {
     DuckLakeConnectionWebview.show(context.extensionUri, schemaManager);
+  });
+
+  const openConfigFileCommand = vscode.commands.registerCommand('ducklake.openConfigFile', async () => {
+    const filePath = ConfigStorage.getStorageFilePath();
+    if (!fs.existsSync(filePath)) {
+      const currentConfig = schemaManager.readConfig();
+      await ConfigStorage.saveConfig(currentConfig);
+    }
+    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
+    await vscode.window.showTextDocument(doc);
   });
 
   const copyConnectCodeCommand = vscode.commands.registerCommand('ducklake.copyConnectCode', async () => {
@@ -216,6 +229,11 @@ con.sql("SHOW TABLES;").show()
     }
   });
 
+  const storageWatcher = ConfigStorage.onDidChangeConfig(async () => {
+    await schemaManager.refreshCatalog(true);
+    treeDataProvider.refresh();
+  });
+
   context.subscriptions.push(
     schemaManager,
     statusBar,
@@ -226,13 +244,15 @@ con.sql("SHOW TABLES;").show()
     testConnectionCommand,
     openSettingsCommand,
     openModalCommand,
+    openConfigFileCommand,
     copyConnectCodeCommand,
     showMenuCommand,
     insertSelectCommand,
     insertColumnNameCommand,
     copyNameCommand,
     createMockDbCommand,
-    configWatcher
+    configWatcher,
+    storageWatcher
   );
 
   // Initial catalog sync

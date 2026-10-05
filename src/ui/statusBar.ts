@@ -70,9 +70,14 @@ export class DuckLakeStatusBar implements vscode.Disposable {
         action: 'test'
       },
       {
-        label: '$(gear) Configure Connection Settings',
-        description: 'Open VS Code settings for DuckLake PostgreSQL',
+        label: '$(gear) Configure Connection (GUI)',
+        description: 'Open DuckLake connection modal window',
         action: 'settings'
+      },
+      {
+        label: '$(file-code) Open connections.json',
+        description: 'Edit extension configuration file directly',
+        action: 'openConfigFile'
       }
     ];
 
@@ -93,6 +98,9 @@ export class DuckLakeStatusBar implements vscode.Disposable {
         break;
       case 'settings':
         vscode.commands.executeCommand('ducklake.openSettings');
+        break;
+      case 'openConfigFile':
+        vscode.commands.executeCommand('ducklake.openConfigFile');
         break;
     }
   }

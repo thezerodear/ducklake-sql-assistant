@@ -28,6 +28,7 @@ A high-performance VS Code extension designed specifically for **DuckLake / Duck
 - **🔌 Direct PostgreSQL Catalog Integration**:
   - Connects directly to the PostgreSQL database hosting the DuckLake catalog via `pg`.
   - **No File Locking Issues**: Prevents concurrency locks or DuckDB catalog conflicts.
+  - **Secure Extension Storage**: Connection profiles and credentials are stored securely in `connections.json` (`globalStorage`), preventing accidental commits to git repositories while keeping connections available across all workspaces and notebooks.
   - Auto-refresh background timer with real-time status indicator in the VS Code status bar.
 
 ---
@@ -38,7 +39,7 @@ A high-performance VS Code extension designed specifically for **DuckLake / Duck
 
 Open a terminal in this directory:
 ```bash
-cd C:\Users\theze\.gemini\antigravity\scratch\ducklake-sql-extension
+cd ducklake-sql-extension
 npm install
 npm run compile
 ```
@@ -62,23 +63,24 @@ Then in VS Code:
 
 ---
 
-## ⚙️ Configuration Settings
+## ⚙️ Configuration & Connection Management
 
-Configure these in your VS Code `settings.json` or through GUI Settings (`Ctrl+,` -> search `ducklake`):
+DuckLake SQL Assistant stores active database credentials inside `connections.json` under your VS Code User `globalStorage` folder:
+- **GUI Modal**: Click the **Plug** icon in the sidebar or run `DuckLake: Connect Catalog (GUI)` to configure connections with a modern user interface.
+- **Direct File Editing**: Run `DuckLake: Open Configuration File (connections.json)` or click `connections.json` from the status bar menu.
+- **Git Safe**: Since connection configs are stored in the extension's user storage rather than workspace `.vscode/settings.json`, passwords and lakehouse paths will never be accidentally committed to source control!
+
+### Workspace Settings Fallback
+
+You can still customize general extension behavior in VS Code `settings.json`:
 
 | Setting | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `ducklake.postgres.connectionString` | string | `""` | Complete PostgreSQL URI (e.g. `postgresql://user:pass@localhost:5432/ducklake_db`). Overrides other settings. |
-| `ducklake.postgres.host` | string | `"localhost"` | PostgreSQL catalog host. |
-| `ducklake.postgres.port` | number | `5432` | PostgreSQL port. |
-| `ducklake.postgres.database` | string | `"postgres"` | Database containing the DuckLake catalog tables. |
-| `ducklake.postgres.user` | string | `"postgres"` | Database user. |
-| `ducklake.postgres.password` | string | `""` | Database password. |
-| `ducklake.postgres.ssl` | boolean | `false` | Enable SSL connection. |
-| `ducklake.catalogSchemas` | array | `["public"]` | List of PostgreSQL schemas to scan for tables/columns. |
+| `ducklake.postgres.clientEncoding` | string | `"auto"` | Client character encoding (`auto`, `UTF8`, `WIN874`, `LATIN1`, `ISO_8859_5`, etc.). |
+| `ducklake.catalogSchemas` | array | `["public", "main"]` | List of catalog schemas to scan. |
 | `ducklake.autoRefreshMinutes` | number | `10` | Auto-refresh interval in minutes (0 to disable). |
 | `ducklake.enableSmartHeuristic` | boolean | `true` | Detect SQL inside triple quotes automatically. |
-| `ducklake.suggestDuckDBFunctions` | boolean | `true` | Suggest DuckDB analytical and Lakehouse functions. |
+| `ducklake.suggestDuckDBFunctions` | boolean | `true` | Suggest DuckDB window, list, and lakehouse analytical functions. |
 
 ---
 
@@ -89,7 +91,8 @@ The status bar at the bottom right displays the current status:
 - Click the status bar item to open the menu:
   - 🔄 **Refresh Catalog Metadata**
   - 🔌 **Test Connection**
-  - ⚙️ **Configure Connection Settings**
+  - ⚙️ **Configure Connection (GUI)**
+  - 📄 **Open connections.json**
 
 ---
 

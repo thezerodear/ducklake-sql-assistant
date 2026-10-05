@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import { SchemaManager } from '../catalog/schemaManager';
 import { PostgresCatalogClient } from '../catalog/postgresClient';
 import { PostgresConfig } from '../catalog/types';
+import { ConfigStorage } from '../catalog/configStorage';
 
 export class DuckLakeConnectionWebview {
   public static currentPanel: DuckLakeConnectionWebview | undefined;
@@ -71,6 +72,9 @@ export class DuckLakeConnectionWebview {
             break;
           case 'copyPythonCode':
             await this.handleCopyPythonCode(message.data);
+            break;
+          case 'openConfigFile':
+            await vscode.commands.executeCommand('ducklake.openConfigFile');
             break;
         }
       },
@@ -219,57 +223,55 @@ con.sql("SHOW TABLES;").show()
 
   private async handleSave(data: any): Promise<void> {
     try {
-      const config = vscode.workspace.getConfiguration('ducklake');
       const isLocal = data.catalogType === 'local';
+      const current = this.schemaManager.readConfig();
+      const connName = data.connectionName?.trim() || 'lake';
 
-      const target = (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0)
-        ? vscode.ConfigurationTarget.Workspace
-        : vscode.ConfigurationTarget.Global;
-
-      // Safe update helper with fallback
-      const setConfig = async (key: string, val: any) => {
-        try {
-          await config.update(key, val, target);
-        } catch (err) {
-          if (target === vscode.ConfigurationTarget.Workspace) {
-            await config.update(key, val, vscode.ConfigurationTarget.Global);
-          } else {
-            throw err;
-          }
-        }
-      };
-
-      await setConfig('connectionName', data.connectionName || 'lake');
-      await setConfig('catalogType', data.catalogType || 'server');
-      await setConfig('dataPath', data.dataPath || '');
-      await setConfig('overrideDataPath', !!data.overrideDataPath);
-      await setConfig('databaseAlias', data.databaseAlias || 'lake');
+      let newConfig: PostgresConfig;
 
       if (isLocal) {
-        await setConfig('duckdb.databasePath', data.catalogConnection?.trim() || '');
+        newConfig = {
+          ...current,
+          connectionName: connName,
+          catalogType: 'local',
+          duckdbDatabasePath: data.catalogConnection?.trim() || '',
+          databaseAlias: data.databaseAlias?.trim() || 'lake',
+          dataPath: data.dataPath?.trim() || '',
+          overrideDataPath: !!data.overrideDataPath
+        };
       } else {
         const connStr = data.catalogConnection?.trim() || data.connectionString?.trim() || '';
         const parsed = PostgresCatalogClient.parseConnString(connStr);
 
-        const host = parsed.host || data.host || 'localhost';
-        const port = parsed.port || parseInt(data.port, 10) || 5439;
-        const database = parsed.database || data.database || 'ducklake_catalog';
-        const user = parsed.user || data.user || 'postgres';
-        const password = parsed.password !== undefined ? parsed.password : (data.password || '');
+        const host = parsed.host || data.host || current.host || 'localhost';
+        const port = parsed.port || parseInt(data.port, 10) || current.port || 5439;
+        const database = parsed.database || data.database || current.database || 'ducklake_catalog';
+        const user = parsed.user || data.user || current.user || 'postgres';
+        const password = parsed.password !== undefined ? parsed.password : (data.password !== undefined ? data.password : (current.password || ''));
 
-        await setConfig('postgres.connectionString', connStr);
-        await setConfig('postgres.host', host);
-        await setConfig('postgres.port', port);
-        await setConfig('postgres.database', database);
-        await setConfig('postgres.user', user);
-        await setConfig('postgres.password', password);
-        await setConfig('postgres.ssl', !!data.ssl);
+        newConfig = {
+          ...current,
+          connectionName: connName,
+          catalogType: 'server',
+          connectionString: connStr,
+          host,
+          port,
+          database,
+          user,
+          password,
+          ssl: !!data.ssl,
+          databaseAlias: data.databaseAlias?.trim() || 'lake',
+          dataPath: data.dataPath?.trim() || '',
+          overrideDataPath: !!data.overrideDataPath
+        };
       }
+
+      await ConfigStorage.saveConfig(newConfig);
 
       // Refresh catalog with new parameters
       await this.schemaManager.refreshCatalog(false);
 
-      vscode.window.showInformationMessage(`DuckLake: Connection "${data.connectionName || 'lake'}" saved & catalog synchronized!`);
+      vscode.window.showInformationMessage(`DuckLake: Connection "${connName}" saved to connections.json & catalog synchronized!`);
       this.panel.dispose();
     } catch (err: any) {
       const errMsg = err?.message || String(err);
@@ -305,6 +307,7 @@ con.sql("SHOW TABLES;").show()
     const dataPath = config.dataPath || '';
     const overrideDataPath = config.overrideDataPath !== undefined ? config.overrideDataPath : false;
     const databaseAlias = config.databaseAlias || 'lake';
+    const storagePath = ConfigStorage.getStorageFilePath().replace(/\\/g, '/');
 
     return /* html */ `
 <!DOCTYPE html>
@@ -810,9 +813,14 @@ con.sql("SHOW TABLES;").show()
         <div class="brand-icon">🦆</div>
         <div class="header-title" id="headerTitle">Edit: ${connName}</div>
       </div>
-      <button class="import-link" id="btnOpenImport">
-        <span>🔗</span> Import connection string
-      </button>
+      <div style="display: flex; gap: 8px;">
+        <button class="import-link" id="btnOpenConfig" title="Open configuration file (connections.json)">
+          <span>📁</span> connections.json
+        </button>
+        <button class="import-link" id="btnOpenImport">
+          <span>🔗</span> Import connection string
+        </button>
+      </div>
     </div>
 
     <!-- Connection Name -->
@@ -927,6 +935,11 @@ con.sql("SHOW TABLES;").show()
         <button class="btn-cancel" id="btnCancel">Cancel</button>
         <button class="btn-save" id="btnSave">Save connection</button>
       </div>
+    </div>
+
+    <div style="margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: var(--text-muted);">
+      <span>🔒 Stored in: <code style="color: #38bdf8; font-size: 11px;">${storagePath}</code></span>
+      <span style="color: #64748b;">(Not in repo)</span>
     </div>
   </div>
 
@@ -1136,6 +1149,14 @@ con.sql("SHOW TABLES;").show()
           command: 'copyPythonCode',
           data: getFormData()
         });
+      });
+    }
+
+    // Open config file button
+    const btnOpenConfig = document.getElementById('btnOpenConfig');
+    if (btnOpenConfig) {
+      btnOpenConfig.addEventListener('click', () => {
+        vscode.postMessage({ command: 'openConfigFile' });
       });
     }
 

@@ -2,7 +2,7 @@
   "name": "ducklake-sql-assistant",
   "displayName": "DuckLake SQL Assistant",
   "description": "SQL Syntax Highlighting, Smart Autocomplete, Sidebar Catalog Explorer, and Postgres/DuckDB Catalog Autosuggestion inside Python & Jupyter Notebook triple quotes for DuckLake / DuckDB.",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "author": "takdanai.mp",
   "publisher": "takdanai-mp",
   "license": "MIT",
@@ -101,6 +101,12 @@
         "title": "DuckLake: Open Connection Settings",
         "category": "DuckLake",
         "icon": "$(gear)"
+      },
+      {
+        "command": "ducklake.openConfigFile",
+        "title": "DuckLake: Open Configuration File (connections.json)",
+        "category": "DuckLake",
+        "icon": "$(file-code)"
       }
     ],
     "menus": {
@@ -124,6 +130,11 @@
           "command": "ducklake.openSettings",
           "when": "view == ducklakeCatalogView",
           "group": "navigation@4"
+        },
+        {
+          "command": "ducklake.openConfigFile",
+          "when": "view == ducklakeCatalogView",
+          "group": "navigation@5"
         }
       ],
       "view/item/context": [

@@ -4,11 +4,13 @@ import * as fs from 'fs';
 import { PostgresCatalogClient } from './postgresClient';
 import { DuckDBLocalClient } from './duckdbClient';
 import { TableMetadata, ColumnMetadata, PostgresConfig, CatalogState, ConnectionState } from './types';
+import { ConfigStorage } from './configStorage';
 
 export class SchemaManager implements vscode.Disposable {
   private client: PostgresCatalogClient;
   private state: CatalogState;
   private refreshTimer?: NodeJS.Timeout;
+  private disposables: vscode.Disposable[] = [];
   private onDidChangeSchemaEmitter = new vscode.EventEmitter<CatalogState>();
   public readonly onDidChangeSchema = this.onDidChangeSchemaEmitter.event;
 
@@ -20,6 +22,13 @@ export class SchemaManager implements vscode.Disposable {
       tables: new Map<string, TableMetadata>()
     };
 
+    this.disposables.push(
+      ConfigStorage.onDidChangeConfig((newConfig) => {
+        this.client.updateConfig(newConfig);
+        this.refreshCatalog(true).catch(() => {});
+      })
+    );
+
     // Load initial schema
     this.refreshCatalog(true).catch((err) => {
       console.error('DuckLake: Initial schema refresh error:', err);
@@ -27,29 +36,7 @@ export class SchemaManager implements vscode.Disposable {
   }
 
   public readConfig(): PostgresConfig {
-    const conf = vscode.workspace.getConfiguration('ducklake');
-    return {
-      connectionString: conf.get<string>('postgres.connectionString', ''),
-      host: conf.get<string>('postgres.host', 'localhost'),
-      port: conf.get<number>('postgres.port', 5439),
-      database: conf.get<string>('postgres.database', 'ducklake_catalog'),
-      user: conf.get<string>('postgres.user', 'postgres'),
-      password: conf.get<string>('postgres.password', ''),
-      ssl: conf.get<boolean>('postgres.ssl', false),
-      catalogSchemas: conf.get<string[]>('catalogSchemas', ['public', 'main']),
-      autoRefreshMinutes: conf.get<number>('autoRefreshMinutes', 10),
-      enableSmartHeuristic: conf.get<boolean>('enableSmartHeuristic', true),
-      suggestDuckDBFunctions: conf.get<boolean>('suggestDuckDBFunctions', true),
-      duckdbDatabasePath: conf.get<string>('duckdb.databasePath', ''),
-      alwaysEnableInTripleQuotes: conf.get<boolean>('alwaysEnableInTripleQuotes', true),
-      connectionName: conf.get<string>('connectionName', 'lake'),
-      catalogType: conf.get<string>('catalogType', 'server'),
-      clientEncoding: conf.get<string>('postgres.clientEncoding', 'auto'),
-      dataStorage: conf.get<string>('dataStorage', 'local'),
-      dataPath: conf.get<string>('dataPath', ''),
-      overrideDataPath: conf.get<boolean>('overrideDataPath', false),
-      databaseAlias: conf.get<string>('databaseAlias', 'lake')
-    };
+    return ConfigStorage.loadConfig();
   }
 
   public getState(): CatalogState {
@@ -255,5 +242,8 @@ export class SchemaManager implements vscode.Disposable {
       clearInterval(this.refreshTimer);
     }
     this.onDidChangeSchemaEmitter.dispose();
+    for (const d of this.disposables) {
+      d.dispose();
+    }
   }
 }
