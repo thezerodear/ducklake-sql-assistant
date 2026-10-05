@@ -142,7 +142,7 @@ con.sql("SHOW TABLES;").show()
   const insertSelectCommand = vscode.commands.registerCommand(
     'ducklake.insertSelectQuery',
     (item: CatalogTreeItem) => {
-      const tableName = item?.metadata?.table?.name || item?.label;
+      const tableName = item?.metadata?.table?.fullName || item?.metadata?.table?.name || item?.label;
       if (!tableName) return;
 
       const editor = vscode.window.activeTextEditor;
@@ -150,6 +150,8 @@ con.sql("SHOW TABLES;").show()
         editor.insertSnippet(
           new vscode.SnippetString(`con.sql("""\n    SELECT * FROM ${tableName} LIMIT 10;\n""").show()\n`)
         );
+      } else {
+        vscode.window.showInformationMessage(`DuckLake: Generated snippet for "${tableName}". Open a Python or Notebook editor to insert queries.`);
       }
     }
   );
@@ -161,6 +163,9 @@ con.sql("SHOW TABLES;").show()
       const editor = vscode.window.activeTextEditor;
       if (editor) {
         editor.insertSnippet(new vscode.SnippetString(columnName));
+      } else {
+        vscode.env.clipboard.writeText(columnName);
+        vscode.window.showInformationMessage(`Copied column "${columnName}" to clipboard.`);
       }
     }
   );

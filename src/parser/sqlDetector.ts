@@ -148,6 +148,7 @@ export class SqlDetector {
         if (qLen === 1) {
           const isPartOfTriple =
             (idx >= 2 && text.slice(idx - 2, idx + 1) === quote.repeat(3)) ||
+            (idx >= 1 && idx + 1 < text.length && text.slice(idx - 1, idx + 2) === quote.repeat(3)) ||
             (idx + 2 < text.length && text.slice(idx, idx + 3) === quote.repeat(3));
           if (isPartOfTriple) {
             searchPos = idx - 1;
@@ -191,6 +192,7 @@ export class SqlDetector {
         if (qLen === 1) {
           const isPartOfTriple =
             (idx >= 2 && text.slice(idx - 2, idx + 1) === quote.repeat(3)) ||
+            (idx >= 1 && idx + 1 < text.length && text.slice(idx - 1, idx + 2) === quote.repeat(3)) ||
             (idx + 2 < text.length && text.slice(idx, idx + 3) === quote.repeat(3));
           if (isPartOfTriple) {
             cSearchPos = idx + 1;

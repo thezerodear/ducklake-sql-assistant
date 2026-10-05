@@ -55,8 +55,27 @@ export class DuckDBLocalClient {
       ]);
     }
 
-    const tablesRows = JSON.parse(tablesJson || '[]');
-    const columnsRows = JSON.parse(columnsJson || '[]');
+    const parseJsonArray = (str: string): any[] => {
+      if (!str || !str.trim()) return [];
+      const trimmed = str.trim();
+      try {
+        return JSON.parse(trimmed);
+      } catch {
+        const start = trimmed.indexOf('[');
+        const end = trimmed.lastIndexOf(']');
+        if (start !== -1 && end !== -1 && end > start) {
+          try {
+            return JSON.parse(trimmed.slice(start, end + 1));
+          } catch {
+            return [];
+          }
+        }
+        return [];
+      }
+    };
+
+    const tablesRows = parseJsonArray(tablesJson);
+    const columnsRows = parseJsonArray(columnsJson);
 
     const columnsByTable = new Map<string, ColumnMetadata[]>();
     for (const row of columnsRows) {
@@ -90,7 +109,7 @@ export class DuckDBLocalClient {
   private static runDuckDBQuery(exe: string, dbPath: string, sql: string): Promise<string> {
     return new Promise((resolve, reject) => {
       const env = { ...process.env, PYTHONIOENCODING: 'utf-8', LC_ALL: 'en_US.UTF-8' };
-      execFile(exe, [dbPath, '-json', sql], { env, encoding: 'utf8' }, (err, stdout, stderr) => {
+      execFile(exe, ['-readonly', dbPath, '-json', sql], { env, encoding: 'utf8' }, (err, stdout, stderr) => {
         if (err) {
           reject(new Error(stderr || err.message));
         } else {

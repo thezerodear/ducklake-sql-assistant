@@ -31,9 +31,27 @@ export class DuckLakeCompletionProvider implements vscode.CompletionItemProvider
     switch (analysis.contextType) {
       case SqlContextType.DOT_COLUMN: {
         if (analysis.dotQualifier) {
+          const lowerQualifier = analysis.dotQualifier.toLowerCase();
           const cols = this.schemaManager.getColumnsForTable(analysis.dotQualifier);
           for (const col of cols) {
             items.push(this.createColumnCompletionItem(col, analysis.dotQualifier, '0_', wordRange));
+          }
+
+          // Suggest tables within this schema (e.g., "main." or "public.")
+          const schemaTables = this.schemaManager.getTables().filter(
+            tbl => tbl.schema.toLowerCase() === lowerQualifier
+          );
+          for (const tbl of schemaTables) {
+            items.push(this.createTableCompletionItem(tbl, '0_', wordRange));
+          }
+
+          // If qualifier matches database alias (e.g., "lake."), suggest all tables
+          const dbAlias = (config.databaseAlias || config.connectionName || 'lake').toLowerCase();
+          if (lowerQualifier === dbAlias) {
+            const allTables = this.schemaManager.getTables();
+            for (const tbl of allTables) {
+              items.push(this.createTableCompletionItem(tbl, '1_', wordRange));
+            }
           }
         }
         break;

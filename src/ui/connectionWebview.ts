@@ -193,7 +193,8 @@ con.sql("SHOW TABLES;").show()
       autoRefreshMinutes: 5,
       enableSmartHeuristic: true,
       suggestDuckDBFunctions: true,
-      alwaysEnableInTripleQuotes: true
+      alwaysEnableInTripleQuotes: true,
+      clientEncoding: this.schemaManager.readConfig().clientEncoding || 'auto'
     };
 
     const client = new PostgresCatalogClient(testConfig);
@@ -309,6 +310,15 @@ con.sql("SHOW TABLES;").show()
     const databaseAlias = config.databaseAlias || 'lake';
     const storagePath = ConfigStorage.getStorageFilePath().replace(/\\/g, '/');
 
+    const escapeHtml = (unsafe: any): string => {
+      return String(unsafe ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    };
+
     return /* html */ `
 <!DOCTYPE html>
 <html lang="en">
@@ -316,7 +326,7 @@ con.sql("SHOW TABLES;").show()
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Edit: ${connName}</title>
+  <title>Edit: ${escapeHtml(connName)}</title>
   <style>
     :root {
       --bg: #141517;
@@ -811,7 +821,7 @@ con.sql("SHOW TABLES;").show()
       <div class="header-left">
         <button class="btn-back" id="btnBack" title="Cancel & Close">←</button>
         <div class="brand-icon">🦆</div>
-        <div class="header-title" id="headerTitle">Edit: ${connName}</div>
+        <div class="header-title" id="headerTitle">Edit: ${escapeHtml(connName)}</div>
       </div>
       <div style="display: flex; gap: 8px;">
         <button class="import-link" id="btnOpenConfig" title="Open configuration file (connections.json)">
@@ -826,7 +836,7 @@ con.sql("SHOW TABLES;").show()
     <!-- Connection Name -->
     <div class="field-group">
       <div class="field-label">Connection name <span class="req-star">*</span></div>
-      <input type="text" id="connName" value="${connName}" placeholder="lake" />
+      <input type="text" id="connName" value="${escapeHtml(connName)}" placeholder="lake" />
     </div>
 
     <!-- Catalog Type -->
@@ -846,7 +856,7 @@ con.sql("SHOW TABLES;").show()
         <span class="info-icon" title="PostgreSQL connection string or local .duckdb file path">ℹ</span>
       </div>
       <div class="input-action-row">
-        <input type="text" id="catalogConn" value="${catalogConn}" placeholder="${isLocal ? 'C:\\path\\to\\my_lake.duckdb' : 'postgres:host=localhost port=5439 dbname=ducklake_catalog user=postgres password=...'}" />
+        <input type="text" id="catalogConn" value="${escapeHtml(catalogConn)}" placeholder="${isLocal ? 'C:\\path\\to\\my_lake.duckdb' : 'postgres:host=localhost port=5439 dbname=ducklake_catalog user=postgres password=...'}" />
         <button class="btn-action-side" id="btnBrowseCatalog" title="Configure details or browse database file">${isLocal ? 'Browse File' : 'Parameters'}</button>
       </div>
     </div>
@@ -858,7 +868,7 @@ con.sql("SHOW TABLES;").show()
         <span class="info-icon" title="Local directory or UNC path storing DuckLake Parquet data files (optional if catalog has data_path)">ℹ</span>
       </div>
       <div class="input-action-row">
-        <input type="text" id="dataPath" value="${dataPath}" placeholder="C:\\path\\to\\data or \\\\fileserver\\share\\data" />
+        <input type="text" id="dataPath" value="${escapeHtml(dataPath)}" placeholder="C:\\path\\to\\data or \\\\fileserver\\share\\data" />
         <button class="btn-action-side" id="btnBrowseDataPath" title="Browse Local or Network Folder">📁</button>
       </div>
       <div class="sub-hint">Supports local paths (e.g. C:/data) and Windows UNC network paths (e.g. //fileserver/share/data)</div>
@@ -882,7 +892,7 @@ con.sql("SHOW TABLES;").show()
         Database Alias
         <span class="info-icon" title="Alias name used inside DuckDB queries (e.g. con.sql('SELECT * FROM lake.main.customers'))">ℹ</span>
       </div>
-      <input type="text" id="dbAlias" value="${databaseAlias}" placeholder="lake" />
+      <input type="text" id="dbAlias" value="${escapeHtml(databaseAlias)}" placeholder="lake" />
     </div>
 
     <!-- Advanced Settings Accordion -->
@@ -894,7 +904,7 @@ con.sql("SHOW TABLES;").show()
       <div class="field-group" style="display: flex; gap: 12px;">
         <div style="flex: 2;">
           <div class="field-label">Host</div>
-          <input type="text" id="advHost" value="${config.host || 'localhost'}" />
+          <input type="text" id="advHost" value="${escapeHtml(config.host || 'localhost')}" />
         </div>
         <div style="flex: 1;">
           <div class="field-label">Port</div>
@@ -904,16 +914,16 @@ con.sql("SHOW TABLES;").show()
       <div class="field-group" style="display: flex; gap: 12px;">
         <div style="flex: 1;">
           <div class="field-label">Database Name</div>
-          <input type="text" id="advDb" value="${config.database || 'ducklake_catalog'}" />
+          <input type="text" id="advDb" value="${escapeHtml(config.database || 'ducklake_catalog')}" />
         </div>
         <div style="flex: 1;">
           <div class="field-label">Username</div>
-          <input type="text" id="advUser" value="${config.user || 'postgres'}" />
+          <input type="text" id="advUser" value="${escapeHtml(config.user || 'postgres')}" />
         </div>
       </div>
       <div class="field-group">
         <div class="field-label">Password</div>
-        <input type="password" id="advPass" value="${config.password || ''}" placeholder="••••••••" />
+        <input type="password" id="advPass" value="${escapeHtml(config.password || '')}" placeholder="••••••••" />
       </div>
     </div>
 

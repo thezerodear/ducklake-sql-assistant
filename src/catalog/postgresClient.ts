@@ -61,11 +61,12 @@ export class PostgresCatalogClient {
   private async configureEncoding(client: Client): Promise<string> {
     const desired = this.config.clientEncoding?.trim();
     if (desired && desired.toLowerCase() !== 'auto') {
+      const safeDesired = desired.replace(/[^a-zA-Z0-9_-]/g, '');
       try {
-        await client.query(`SET client_encoding = '${desired}';`);
-        return desired;
+        await client.query(`SET client_encoding = '${safeDesired}';`);
+        return safeDesired;
       } catch (err) {
-        console.warn(`DuckLake: Custom client_encoding '${desired}' failed:`, err);
+        console.warn(`DuckLake: Custom client_encoding '${safeDesired}' failed:`, err);
       }
     }
 
@@ -80,8 +81,9 @@ export class PostgresCatalogClient {
         const res = await client.query('SHOW server_encoding;');
         const serverEnc = res.rows[0]?.server_encoding;
         if (serverEnc) {
-          await client.query(`SET client_encoding = '${serverEnc}';`);
-          return serverEnc;
+          const safeServerEnc = String(serverEnc).replace(/[^a-zA-Z0-9_-]/g, '');
+          await client.query(`SET client_encoding = '${safeServerEnc}';`);
+          return safeServerEnc;
         }
       } catch (_) {
         // ignore
@@ -159,25 +161,26 @@ export class PostgresCatalogClient {
       let extra = '';
       if (hasDuckLake) {
         const countRes = await client.query("SELECT COUNT(*) FROM ducklake_table WHERE end_snapshot IS NULL;");
-        extra = ` (DuckLake Metastore detected: ${countRes.rows[0].count} active lakehouse tables)`;
+        const count = countRes.rows[0]?.count ?? 0;
+        extra = ` (DuckLake Metastore detected: ${count} active lakehouse tables)`;
       }
 
-      await client.end();
       return {
         success: true,
         message: `Successfully connected to PostgreSQL (${usedEncoding})!${extra}`,
         version: res.rows[0]?.version
       };
     } catch (err: any) {
+      return {
+        success: false,
+        message: `Failed to connect to PostgreSQL: ${err.message || err}`
+      };
+    } finally {
       try {
         await client.end();
       } catch {
         // ignore
       }
-      return {
-        success: false,
-        message: `Failed to connect to PostgreSQL: ${err.message || err}`
-      };
     }
   }
 
@@ -224,7 +227,7 @@ export class PostgresCatalogClient {
           JOIN ducklake_table t ON c.table_id = t.table_id
           JOIN ducklake_schema s ON t.schema_id = s.schema_id
           WHERE t.end_snapshot IS NULL AND c.end_snapshot IS NULL
-          ORDER BY s.schema_name, t.table_name, CAST(c.column_order AS integer);
+          ORDER BY s.schema_name, t.table_name, CAST(COALESCE(c.column_order, 0) AS integer);
         `;
 
         const [tablesResult, columnsResult] = await Promise.all([
@@ -389,15 +392,15 @@ export class PostgresCatalogClient {
         console.error('Error fetching PostgreSQL tables/views:', pgErr);
       }
 
-      await client.end();
       return tables;
     } catch (err: any) {
+      throw new Error(`Catalog query failed: ${err.message || err}`);
+    } finally {
       try {
         await client.end();
       } catch {
         // ignore
       }
-      throw new Error(`Catalog query failed: ${err.message || err}`);
     }
   }
 

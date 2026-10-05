@@ -58,6 +58,12 @@ export class SchemaManager implements vscode.Disposable {
     }
     if (clean.includes('.')) {
       const parts = clean.split('.');
+      if (parts.length >= 2) {
+        const twoPart = parts.slice(-2).join('.');
+        if (this.state.tables.has(twoPart)) {
+          return this.state.tables.get(twoPart);
+        }
+      }
       const simple = parts[parts.length - 1];
       if (this.state.tables.has(simple)) {
         return this.state.tables.get(simple);
@@ -90,8 +96,10 @@ export class SchemaManager implements vscode.Disposable {
   private setTables(tables: TableMetadata[], status: ConnectionState, errorMessage?: string): void {
     this.state.tables.clear();
     for (const table of tables) {
-      this.state.tables.set(table.name.toLowerCase(), table);
       this.state.tables.set(table.fullName.toLowerCase(), table);
+      if (!this.state.tables.has(table.name.toLowerCase())) {
+        this.state.tables.set(table.name.toLowerCase(), table);
+      }
     }
     this.state.status = status;
     this.state.lastRefreshed = new Date();

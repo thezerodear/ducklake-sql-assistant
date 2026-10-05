@@ -103,13 +103,19 @@ export class SqlContextAnalyzer {
     let match: RegExpExecArray | null;
 
     while ((match = fromJoinRegex.exec(sql)) !== null) {
-      let rawTable = match[1].replace(/["`]/g, '').toLowerCase();
-      const simpleTable = rawTable.includes('.') ? rawTable.split('.')[1] : rawTable;
+      const rawTable = match[1].replace(/["`]/g, '').toLowerCase();
+      const parts = rawTable.split('.');
+      const simpleTable = parts[parts.length - 1];
 
       referencedTables.push(simpleTable);
       aliasMap.set(simpleTable, simpleTable);
       if (rawTable !== simpleTable) {
+        referencedTables.push(rawTable);
         aliasMap.set(rawTable, simpleTable);
+        if (parts.length >= 2) {
+          const twoPart = parts.slice(-2).join('.');
+          aliasMap.set(twoPart, simpleTable);
+        }
       }
 
       const alias = match[2];

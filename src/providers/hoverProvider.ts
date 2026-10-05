@@ -28,35 +28,7 @@ export class DuckLakeHoverProvider implements vscode.HoverProvider {
 
     const word = document.getText(wordRange);
 
-    // 1. Check if hovering over "table.column" or "alias.column"
-    if (word.includes('.')) {
-      const parts = word.split('.');
-      const qualifier = parts[0];
-      const colName = parts[1];
-
-      const { aliasMap } = SqlContextAnalyzer.analyze(sqlDetection.sqlPrefix, sqlDetection.fullSql);
-      const tableName = aliasMap.get(qualifier.toLowerCase()) || qualifier;
-      const table = this.schemaManager.findTable(tableName);
-
-      if (table) {
-        const col = table.columns.find(c => c.name.toLowerCase() === colName.toLowerCase());
-        if (col) {
-          const md = new vscode.MarkdownString();
-          md.appendMarkdown(`### \`${table.name}.${col.name}\`\n\n`);
-          md.appendMarkdown(`- **Type:** \`${col.dataType}\`\n`);
-          md.appendMarkdown(`- **Table:** \`${table.fullName}\`\n`);
-          md.appendMarkdown(`- **Nullable:** ${col.isNullable ? 'YES' : 'NO'}\n`);
-          if (col.defaultValue) {
-            md.appendMarkdown(`- **Default:** \`${col.defaultValue}\`\n`);
-          }
-          if (col.comment) {
-            md.appendMarkdown(`- **Comment:** ${col.comment}\n`);
-          }
-          return new vscode.Hover(md, wordRange);
-        }
-      }
-    }
-
+    // 1. Direct Table match (e.g. "customers", "main.customers", or "lake.main.customers")
     const table = this.schemaManager.findTable(word);
     if (table) {
       const md = new vscode.MarkdownString();
@@ -74,6 +46,35 @@ export class DuckLakeHoverProvider implements vscode.HoverProvider {
         md.appendMarkdown(`| \`${col.name}\` | \`${col.dataType}\` | ${col.isNullable ? 'YES' : 'NO'} |\n`);
       }
       return new vscode.Hover(md, wordRange);
+    }
+
+    // 2. Check if hovering over "table.column", "alias.column", or "schema.table.column"
+    if (word.includes('.')) {
+      const parts = word.split('.');
+      const colName = parts[parts.length - 1];
+      const qualifier = parts.slice(0, parts.length - 1).join('.');
+
+      const { aliasMap } = SqlContextAnalyzer.analyze(sqlDetection.sqlPrefix, sqlDetection.fullSql);
+      const tableName = aliasMap.get(qualifier.toLowerCase()) || qualifier;
+      const qualifiedTable = this.schemaManager.findTable(tableName);
+
+      if (qualifiedTable) {
+        const col = qualifiedTable.columns.find(c => c.name.toLowerCase() === colName.toLowerCase());
+        if (col) {
+          const md = new vscode.MarkdownString();
+          md.appendMarkdown(`### \`${qualifiedTable.name}.${col.name}\`\n\n`);
+          md.appendMarkdown(`- **Type:** \`${col.dataType}\`\n`);
+          md.appendMarkdown(`- **Table:** \`${qualifiedTable.fullName}\`\n`);
+          md.appendMarkdown(`- **Nullable:** ${col.isNullable ? 'YES' : 'NO'}\n`);
+          if (col.defaultValue) {
+            md.appendMarkdown(`- **Default:** \`${col.defaultValue}\`\n`);
+          }
+          if (col.comment) {
+            md.appendMarkdown(`- **Comment:** ${col.comment}\n`);
+          }
+          return new vscode.Hover(md, wordRange);
+        }
+      }
     }
 
     // 3. Check if hovering over a Column Name directly

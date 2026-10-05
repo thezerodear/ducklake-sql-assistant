@@ -12,6 +12,7 @@ export interface StoredConnectionsFile {
 export class ConfigStorage {
   private static storageUri?: vscode.Uri;
   private static watcher?: vscode.FileSystemWatcher;
+  private static isInternalSaving = false;
   private static _onDidChangeConfig = new vscode.EventEmitter<PostgresConfig>();
   public static readonly onDidChangeConfig = ConfigStorage._onDidChangeConfig.event;
 
@@ -35,10 +36,14 @@ export class ConfigStorage {
         new vscode.RelativePattern(storageUri, 'connections.json')
       );
       ConfigStorage.watcher.onDidChange(() => {
-        ConfigStorage._onDidChangeConfig.fire(ConfigStorage.loadConfig());
+        if (!ConfigStorage.isInternalSaving) {
+          ConfigStorage._onDidChangeConfig.fire(ConfigStorage.loadConfig());
+        }
       });
       ConfigStorage.watcher.onDidCreate(() => {
-        ConfigStorage._onDidChangeConfig.fire(ConfigStorage.loadConfig());
+        if (!ConfigStorage.isInternalSaving) {
+          ConfigStorage._onDidChangeConfig.fire(ConfigStorage.loadConfig());
+        }
       });
       if (context) {
         context.subscriptions.push(ConfigStorage.watcher);
@@ -152,6 +157,14 @@ export class ConfigStorage {
     };
 
     if (!fileData) {
+      if (fs.existsSync(filePath)) {
+        try {
+          const rawExisting = fs.readFileSync(filePath, 'utf-8');
+          if (rawExisting.trim().length > 0) {
+            fs.writeFileSync(filePath + '.bak', rawExisting, 'utf-8');
+          }
+        } catch (_) {}
+      }
       fileData = {
         version: 1,
         activeConnection: targetName,
@@ -170,8 +183,15 @@ export class ConfigStorage {
       }
     }
 
-    fs.writeFileSync(filePath, JSON.stringify(fileData, null, 2), 'utf-8');
-    ConfigStorage._onDidChangeConfig.fire(ConfigStorage.loadConfig());
+    ConfigStorage.isInternalSaving = true;
+    try {
+      fs.writeFileSync(filePath, JSON.stringify(fileData, null, 2), 'utf-8');
+      ConfigStorage._onDidChangeConfig.fire(ConfigStorage.loadConfig());
+    } finally {
+      setTimeout(() => {
+        ConfigStorage.isInternalSaving = false;
+      }, 500);
+    }
   }
 
   public static getAllConnections(): PostgresConfig[] {
