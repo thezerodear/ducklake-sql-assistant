@@ -21,12 +21,13 @@ export class DuckLakeHoverProvider implements vscode.HoverProvider {
       return undefined;
     }
 
-    const wordRange = document.getWordRangeAtPosition(position, /[a-zA-Z0-9_.]+/);
+    const wordRange = document.getWordRangeAtPosition(position, /[a-zA-Z0-9_."`\u0E00-\u0E7F]+/);
     if (!wordRange) {
       return undefined;
     }
 
-    const word = document.getText(wordRange);
+    const rawWord = document.getText(wordRange);
+    const word = rawWord.replace(/["`]/g, '');
 
     // 1. Direct Table match (e.g. "customers", "main.customers", or "lake.main.customers")
     const table = this.schemaManager.findTable(word);

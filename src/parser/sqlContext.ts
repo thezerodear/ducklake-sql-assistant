@@ -24,12 +24,12 @@ export class SqlContextAnalyzer {
     const { referencedTables, aliasMap } = this.extractTablesAndAliases(fullSql);
     const trimmedPrefix = sqlPrefix.trimEnd();
 
-    // 1. Check for Dot notation completion: "u." or "u.use" or "lake_users.em"
-    const dotMatch = trimmedPrefix.match(/([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]*)$/);
+    // 1. Check for Dot notation completion: "u." or "u.use" or "lake_users.em" or "ลูกค้า."
+    const dotMatch = trimmedPrefix.match(/([a-zA-Z0-9_"\u0E00-\u0E7F]+)\.([a-zA-Z0-9_"\u0E00-\u0E7F]*)$/);
     if (dotMatch) {
-      const qualifier = dotMatch[1];
-      const dotPrefix = dotMatch[2] || '';
-      const resolvedTable = aliasMap.get(qualifier.toLowerCase()) || qualifier;
+      const rawQualifier = dotMatch[1].replace(/["`]/g, '');
+      const dotPrefix = dotMatch[2]?.replace(/["`]/g, '') || '';
+      const resolvedTable = aliasMap.get(rawQualifier.toLowerCase()) || rawQualifier;
       return {
         contextType: SqlContextType.DOT_COLUMN,
         dotQualifier: resolvedTable,
@@ -41,10 +41,10 @@ export class SqlContextAnalyzer {
     }
 
     // 2. Extract current word token
-    const lastWordMatch = trimmedPrefix.match(/([a-zA-Z0-9_]+)$/);
-    const currentToken = lastWordMatch ? lastWordMatch[1] : '';
+    const lastWordMatch = trimmedPrefix.match(/([a-zA-Z0-9_"\u0E00-\u0E7F]+)$/);
+    const currentToken = lastWordMatch ? lastWordMatch[1].replace(/["`]/g, '') : '';
 
-    const prefixWithoutCurrentToken = trimmedPrefix.slice(0, trimmedPrefix.length - currentToken.length).trimEnd();
+    const prefixWithoutCurrentToken = trimmedPrefix.slice(0, trimmedPrefix.length - (lastWordMatch ? lastWordMatch[1].length : 0)).trimEnd();
     const upperPrefix = prefixWithoutCurrentToken.toUpperCase();
 
     // 3. Check for TABLE context (after FROM, JOIN, INTO, TABLE, etc.)
@@ -62,7 +62,7 @@ export class SqlContextAnalyzer {
     // 4. Check for COLUMN context:
     // a) After SELECT, WHERE, ON, GROUP BY, ORDER BY, HAVING, AND, OR, or comma
     if (/(?:SELECT|WHERE|ON|GROUP\s+BY|ORDER\s+BY|HAVING|AND|OR|,)\s*$/i.test(prefixWithoutCurrentToken) ||
-        /(?:SELECT|WHERE|ON|GROUP\s+BY|ORDER\s+BY|HAVING|AND|OR|,)\s+[a-zA-Z0-9_]*$/i.test(trimmedPrefix)) {
+        /(?:SELECT|WHERE|ON|GROUP\s+BY|ORDER\s+BY|HAVING|AND|OR|,)\s+[a-zA-Z0-9_"\u0E00-\u0E7F]*$/i.test(trimmedPrefix)) {
       return {
         contextType: SqlContextType.COLUMN,
         referencedTables,
@@ -99,7 +99,12 @@ export class SqlContextAnalyzer {
     const referencedTables: string[] = [];
     const aliasMap = new Map<string, string>();
 
-    const fromJoinRegex = /\b(?:FROM|JOIN)\s+([a-zA-Z0-9_."]+)(?:\s+(?:AS\s+)?([a-zA-Z0-9_]+))?/gi;
+    const identPattern = '(?:"[^"]+"|`[^`]+`|[\\w\\u0E00-\\u0E7F]+)';
+    const tablePattern = '(?:' + identPattern + '(?:\\.' + identPattern + ')*)';
+    const reservedKeywords = 'WHERE|ON|JOIN|LEFT|RIGHT|INNER|FULL|CROSS|GROUP|ORDER|LIMIT|USING|SET|VALUES|SELECT|UNION';
+    const aliasPattern = '(?:AS\\s+(' + identPattern + ')|(?!' + reservedKeywords + '\\b)(' + identPattern + '))';
+
+    const fromJoinRegex = new RegExp('(?:\\bFROM|\\bJOIN)\\s+(' + tablePattern + ')(?:\\s+' + aliasPattern + ')?', 'gi');
     let match: RegExpExecArray | null;
 
     while ((match = fromJoinRegex.exec(sql)) !== null) {
@@ -118,7 +123,7 @@ export class SqlContextAnalyzer {
         }
       }
 
-      const alias = match[2];
+      const alias = (match[2] || match[3] || '').replace(/["`]/g, '');
       if (alias) {
         const lowerAlias = alias.toLowerCase();
         const reserved = ['on', 'where', 'left', 'right', 'inner', 'full', 'cross', 'join', 'group', 'order', 'limit', 'using'];

@@ -26,7 +26,7 @@ export class DuckLakeCompletionProvider implements vscode.CompletionItemProvider
 
     const analysis = SqlContextAnalyzer.analyze(sqlDetection.sqlPrefix, sqlDetection.fullSql);
     const items: vscode.CompletionItem[] = [];
-    const wordRange = document.getWordRangeAtPosition(position, /[a-zA-Z0-9_]+/);
+    const wordRange = document.getWordRangeAtPosition(position, /[a-zA-Z0-9_\u0E00-\u0E7F]+/);
 
     switch (analysis.contextType) {
       case SqlContextType.DOT_COLUMN: {
