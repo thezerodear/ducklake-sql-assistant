@@ -98,18 +98,20 @@ export class PostgresCatalogClient {
       const safeDesired = desired.replace(/[^a-zA-Z0-9_-]/g, '');
       try {
         await client.query(`SET client_encoding = '${safeDesired}';`);
+        process.env.PGCLIENTENCODING = safeDesired;
         return safeDesired;
       } catch (err) {
         console.warn(`DuckLake: Custom client_encoding '${safeDesired}' failed:`, err);
       }
     }
 
-    // Auto strategy: Query the active client encoding directly without forcing UTF-8 conversion
+    // Auto strategy: Query the active client encoding directly without forcing transcoding
     try {
       const res = await client.query('SHOW client_encoding;');
       const activeEnc = res.rows[0]?.client_encoding;
       if (activeEnc) {
-        return activeEnc;
+        process.env.PGCLIENTENCODING = String(activeEnc);
+        return String(activeEnc);
       }
     } catch (_) {
       // ignore
@@ -117,18 +119,21 @@ export class PostgresCatalogClient {
 
     try {
       const res = await client.query('SHOW server_encoding;');
-      return res.rows[0]?.server_encoding || 'WIN874';
+      const sEnc = String(res.rows[0]?.server_encoding || 'UTF8');
+      process.env.PGCLIENTENCODING = sEnc;
+      return sEnc;
     } catch (_) {
-      return 'WIN874';
+      return process.env.PGCLIENTENCODING || 'UTF8';
     }
   }
 
   private createClient(): Client {
-    const enc = this.config.clientEncoding && this.config.clientEncoding.toLowerCase() !== 'auto'
-      ? this.config.clientEncoding
-      : 'WIN874';
-    process.env.PGCLIENTENCODING = enc;
-    const clientOptions = `-c client_encoding=${enc}`;
+    const isCustom = this.config.clientEncoding && this.config.clientEncoding.toLowerCase() !== 'auto';
+    const enc = isCustom ? this.config.clientEncoding! : (process.env.PGCLIENTENCODING || 'UTF8');
+    if (isCustom) {
+      process.env.PGCLIENTENCODING = enc;
+    }
+    const clientOptions = isCustom ? `-c client_encoding=${enc}` : undefined;
 
     const rawConnStr = this.config.connectionString?.trim();
     if (rawConnStr) {
