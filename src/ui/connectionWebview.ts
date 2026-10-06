@@ -1071,7 +1071,7 @@ con.sql("SHOW TABLES;").show()
         } catch (_) {}
       }
       // key-value format
-      const cleaned = str.replace(/^postgres:/, '').trim();
+      const cleaned = str.replace(/^(?:ducklake:)?(?:postgres:)+/i, '').trim();
       const regex = /([a-zA-Z_]+)=([^\\s"']+|'[^']*'|"[^"]*")/g;
       let match;
       while ((match = regex.exec(cleaned)) !== null) {

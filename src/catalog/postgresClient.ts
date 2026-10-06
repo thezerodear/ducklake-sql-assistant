@@ -73,7 +73,7 @@ export class PostgresCatalogClient {
       }
     }
 
-    const cleaned = trimmed.replace(/^postgres:/, '').trim();
+    const cleaned = trimmed.replace(/^(?:ducklake:)?(?:postgres:)+/i, '').trim();
     const result: any = {};
     const regex = /([a-zA-Z_]+)=([^\s"']+|'[^']*'|"[^"]*")/g;
     let match;
