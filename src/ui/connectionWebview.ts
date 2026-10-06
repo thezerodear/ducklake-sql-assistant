@@ -164,7 +164,8 @@ export class DuckLakeConnectionWebview {
   }
 
   private async handleCopyPythonCode(data: any): Promise<void> {
-    const connStr = data.catalogConnection?.trim() || data.connectionString?.trim() || '';
+    const isLocal = data.catalogType === 'local';
+    const rawConn = data.catalogConnection?.trim() || data.connectionString?.trim() || '';
     const alias = data.databaseAlias?.trim() || 'lake';
     let dataPathClause = '';
     if (data.dataPath && data.overrideDataPath) {
@@ -172,18 +173,33 @@ export class DuckLakeConnectionWebview {
       dataPathClause = ` (DATA_PATH '${cleanPath}')`;
     }
 
+    let attachTarget = '';
+    let extensionsLoad = '';
+
+    if (isLocal) {
+      const cleanDb = rawConn.replace(/^(?:ducklake:)+/i, '').replace(/\\/g, '/');
+      attachTarget = `ducklake:${cleanDb}`;
+      extensionsLoad = 'con.execute("INSTALL ducklake; LOAD ducklake;")';
+    } else {
+      let cleaned = rawConn.replace(/^(?:ducklake:)+/i, '').trim();
+      if (!cleaned.startsWith('postgresql://') && !cleaned.startsWith('postgres://')) {
+        cleaned = cleaned.replace(/^(?:postgres:)+/i, '').trim();
+      }
+      attachTarget = `ducklake:postgres:${cleaned}`;
+      extensionsLoad = `con.execute("INSTALL ducklake; INSTALL postgres;")\ncon.execute("LOAD ducklake; LOAD postgres;")`;
+    }
+
     const snippet = `import duckdb
 
 # 1. Connect DuckDB
 con = duckdb.connect()
 
-# 2. Install & load ducklake and postgres extensions
-con.execute("INSTALL ducklake; INSTALL postgres;")
-con.execute("LOAD ducklake; LOAD postgres;")
+# 2. Install & load extensions
+${extensionsLoad}
 
 # 3. Attach DuckLake Catalog
 con.execute("""
-    ATTACH 'ducklake:postgres:${connStr}' 
+    ATTACH '${attachTarget}' 
     AS ${alias}${dataPathClause};
 """)
 

@@ -100,8 +100,8 @@ export function activate(context: vscode.ExtensionContext) {
 
   const copyConnectCodeCommand = vscode.commands.registerCommand('ducklake.copyConnectCode', async () => {
     const config = schemaManager.readConfig();
-    const connStr = config.connectionString ||
-      `dbname=${config.database} host=${config.host} port=${config.port} user=${config.user} password=${config.password}`;
+    const isLocal = config.catalogType === 'local';
+    const alias = config.databaseAlias || config.connectionName || 'lake';
 
     let dataPathClause = '';
     if (config.dataPath && config.overrideDataPath) {
@@ -109,20 +109,37 @@ export function activate(context: vscode.ExtensionContext) {
       dataPathClause = ` (DATA_PATH '${cleanPath}')`;
     }
 
-    const alias = config.databaseAlias || 'lake';
+    let attachTarget = '';
+    let extensionsLoad = '';
+
+    if (isLocal) {
+      const cleanDb = (config.duckdbDatabasePath || 'ducklake.db').replace(/^(?:ducklake:)+/i, '').replace(/\\/g, '/');
+      attachTarget = `ducklake:${cleanDb}`;
+      extensionsLoad = 'con.execute("INSTALL ducklake; LOAD ducklake;")';
+    } else {
+      let raw = config.connectionString?.trim() || '';
+      if (!raw) {
+        raw = `host=${config.host} port=${config.port} dbname=${config.database} user=${config.user} password=${config.password}`;
+      }
+      let cleaned = raw.replace(/^(?:ducklake:)+/i, '').trim();
+      if (!cleaned.startsWith('postgresql://') && !cleaned.startsWith('postgres://')) {
+        cleaned = cleaned.replace(/^(?:postgres:)+/i, '').trim();
+      }
+      attachTarget = `ducklake:postgres:${cleaned}`;
+      extensionsLoad = `con.execute("INSTALL ducklake; INSTALL postgres;")\ncon.execute("LOAD ducklake; LOAD postgres;")`;
+    }
 
     const snippet = `import duckdb
 
 # 1. Connect DuckDB
 con = duckdb.connect()
 
-# 2. Install & load ducklake and postgres extensions
-con.execute("INSTALL ducklake; INSTALL postgres;")
-con.execute("LOAD ducklake; LOAD postgres;")
+# 2. Install & load extensions
+${extensionsLoad}
 
 # 3. Attach DuckLake Catalog
 con.execute("""
-    ATTACH 'ducklake:postgres:${connStr}' 
+    ATTACH '${attachTarget}' 
     AS ${alias}${dataPathClause};
 """)
 
@@ -303,17 +320,23 @@ con.sql("SHOW TABLES;").show()
 
       let snippet = '';
       if (isLocal) {
-        const dbPath = config.duckdbDatabasePath || 'ducklake.db';
-        snippet = `ATTACH '${dbPath.replace(/\\/g, '/')}' AS ${alias};\nUSE ${alias};\nSHOW TABLES;`;
+        const dbPath = (config.duckdbDatabasePath || 'ducklake.db').replace(/^(?:ducklake:)+/i, '').replace(/\\/g, '/');
+        snippet = `ATTACH 'ducklake:${dbPath}' AS ${alias};\nUSE ${alias};\nSHOW TABLES;`;
       } else {
-        const connStr = config.connectionString ||
-          `dbname=${config.database} host=${config.host} port=${config.port} user=${config.user} password=${config.password}`;
+        let raw = config.connectionString?.trim() || '';
+        if (!raw) {
+          raw = `host=${config.host} port=${config.port} dbname=${config.database} user=${config.user} password=${config.password}`;
+        }
+        let cleaned = raw.replace(/^(?:ducklake:)+/i, '').trim();
+        if (!cleaned.startsWith('postgresql://') && !cleaned.startsWith('postgres://')) {
+          cleaned = cleaned.replace(/^(?:postgres:)+/i, '').trim();
+        }
         let dataPathClause = '';
         if (config.dataPath && config.overrideDataPath) {
           const cleanPath = config.dataPath.replace(/\\/g, '/');
           dataPathClause = ` (DATA_PATH '${cleanPath}')`;
         }
-        snippet = `ATTACH 'ducklake:postgres:${connStr}' AS ${alias}${dataPathClause};\nUSE ${alias};\nSHOW TABLES;`;
+        snippet = `ATTACH 'ducklake:postgres:${cleaned}' AS ${alias}${dataPathClause};\nUSE ${alias};\nSHOW TABLES;`;
       }
       await vscode.env.clipboard.writeText(snippet);
       vscode.window.showInformationMessage(`DuckLake: ATTACH SQL code for "${alias}" copied to clipboard!`);
