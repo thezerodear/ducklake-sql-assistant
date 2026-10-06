@@ -62,7 +62,7 @@ export class CatalogTreeItem extends vscode.TreeItem {
         if (this.metadata?.table?.rowCount != null) {
           this.description = `${this.metadata.table.rowCount} rows`;
         }
-        this.tooltip = `Table: ${this.metadata?.table?.fullName}\nType: ${this.metadata?.table?.type}\nColumns: ${this.metadata?.table?.columns.length}`;
+        this.tooltip = `Table: ${this.metadata?.table?.fullName}\nType: ${this.metadata?.table?.type}\nColumns: ${this.metadata?.table?.columns?.length ?? 0}`;
         break;
 
       case 'view':
@@ -72,7 +72,7 @@ export class CatalogTreeItem extends vscode.TreeItem {
         } else {
           this.description = 'view';
         }
-        this.tooltip = `View: ${this.metadata?.table?.fullName}\nType: VIEW\nColumns: ${this.metadata?.table?.columns.length}`;
+        this.tooltip = `View: ${this.metadata?.table?.fullName}\nType: VIEW\nColumns: ${this.metadata?.table?.columns?.length ?? 0}`;
         break;
 
       case 'column':
@@ -234,7 +234,7 @@ export class DuckLakeTreeDataProvider implements vscode.TreeDataProvider<Catalog
 
     // 6. Under Table or View -> Columns list
     if ((element.nodeType === 'table' || element.nodeType === 'view') && element.metadata?.table) {
-      const cols = element.metadata.table.columns;
+      const cols = element.metadata.table.columns || [];
       return cols.map(
         (c) =>
           new CatalogTreeItem(
