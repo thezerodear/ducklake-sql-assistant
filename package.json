@@ -107,10 +107,51 @@
         "title": "DuckLake: Open Configuration File (connections.json)",
         "category": "DuckLake",
         "icon": "$(file-code)"
+      },
+      {
+        "command": "ducklake.addDatabase",
+        "title": "Add Database...",
+        "category": "DuckLake",
+        "icon": "$(add)"
+      },
+      {
+        "command": "ducklake.setActiveDatabase",
+        "title": "Set as Active Database",
+        "category": "DuckLake",
+        "icon": "$(check)"
+      },
+      {
+        "command": "ducklake.refreshDatabase",
+        "title": "Refresh Database",
+        "category": "DuckLake",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "ducklake.editDatabase",
+        "title": "Edit Connection...",
+        "category": "DuckLake",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "ducklake.copyDatabaseAttachCode",
+        "title": "Copy ATTACH Code",
+        "category": "DuckLake",
+        "icon": "$(clippy)"
+      },
+      {
+        "command": "ducklake.deleteDatabase",
+        "title": "Delete Connection",
+        "category": "DuckLake",
+        "icon": "$(trash)"
       }
     ],
     "menus": {
       "view/title": [
+        {
+          "command": "ducklake.addDatabase",
+          "when": "view == ducklakeCatalogView",
+          "group": "navigation@0"
+        },
         {
           "command": "ducklake.refreshCatalog",
           "when": "view == ducklakeCatalogView",
@@ -138,6 +179,31 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "ducklake.setActiveDatabase",
+          "when": "view == ducklakeCatalogView && viewItem == database",
+          "group": "inline@1"
+        },
+        {
+          "command": "ducklake.refreshDatabase",
+          "when": "view == ducklakeCatalogView && (viewItem == database || viewItem == databaseActive)",
+          "group": "inline@2"
+        },
+        {
+          "command": "ducklake.editDatabase",
+          "when": "view == ducklakeCatalogView && (viewItem == database || viewItem == databaseActive)",
+          "group": "1_manage@1"
+        },
+        {
+          "command": "ducklake.copyDatabaseAttachCode",
+          "when": "view == ducklakeCatalogView && (viewItem == database || viewItem == databaseActive)",
+          "group": "1_manage@2"
+        },
+        {
+          "command": "ducklake.deleteDatabase",
+          "when": "view == ducklakeCatalogView && viewItem == database",
+          "group": "1_manage@3"
+        },
         {
           "command": "ducklake.insertSelectQuery",
           "when": "view == ducklakeCatalogView && (viewItem == table || viewItem == view)",

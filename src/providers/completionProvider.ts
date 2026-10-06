@@ -45,12 +45,37 @@ export class DuckLakeCompletionProvider implements vscode.CompletionItemProvider
             items.push(this.createTableCompletionItem(tbl, '0_', wordRange));
           }
 
-          // If qualifier matches database alias (e.g., "lake."), suggest all tables
-          const dbAlias = (config.databaseAlias || config.connectionName || 'lake').toLowerCase();
-          if (lowerQualifier === dbAlias) {
-            const allTables = this.schemaManager.getTables();
-            for (const tbl of allTables) {
-              items.push(this.createTableCompletionItem(tbl, '1_', wordRange));
+          // Check if qualifier is 2-part db.schema (e.g. "lake.main.")
+          if (lowerQualifier.includes('.')) {
+            const [dbPart, schPart] = lowerQualifier.split('.');
+            const dbTables = this.schemaManager.getTables(dbPart);
+            if (dbTables.length > 0) {
+              const matchedTables = dbTables.filter(t => (t.schema || 'main').toLowerCase() === schPart);
+              for (const tbl of matchedTables) {
+                items.push(this.createTableCompletionItem(tbl, '0_', wordRange));
+              }
+            }
+          }
+
+          // If qualifier matches any database alias or connectionName (e.g. "lake.", "sales.")
+          const databases = this.schemaManager.getDatabases();
+          for (const db of databases) {
+            const alias = (db.databaseAlias || db.connectionName).toLowerCase();
+            const conn = db.connectionName.toLowerCase();
+            if (lowerQualifier === alias || lowerQualifier === conn) {
+              // Suggest schemas in this database
+              const schemas = new Set(db.tables.map(t => t.schema || 'main'));
+              for (const sch of schemas) {
+                const schItem = new vscode.CompletionItem(sch, vscode.CompletionItemKind.Module);
+                schItem.detail = `Schema (${db.databaseAlias || db.connectionName})`;
+                schItem.sortText = `0_${sch}`;
+                if (wordRange) schItem.range = wordRange;
+                items.push(schItem);
+              }
+              // Suggest tables in this database
+              for (const tbl of db.tables) {
+                items.push(this.createTableCompletionItem(tbl, '1_', wordRange));
+              }
             }
           }
         }
@@ -58,12 +83,23 @@ export class DuckLakeCompletionProvider implements vscode.CompletionItemProvider
       }
 
       case SqlContextType.TABLE: {
+        // Suggest database aliases
+        const databases = this.schemaManager.getDatabases();
+        for (const db of databases) {
+          const alias = db.databaseAlias || db.connectionName;
+          const dbItem = new vscode.CompletionItem(alias, vscode.CompletionItemKind.Module);
+          dbItem.detail = `Database (${db.catalogType === 'local' ? 'Local DuckDB' : 'DuckLake Metastore'})`;
+          dbItem.sortText = `0_${alias}`;
+          if (wordRange) dbItem.range = wordRange;
+          items.push(dbItem);
+        }
+
         const tables = this.schemaManager.getTables();
         for (const tbl of tables) {
-          items.push(this.createTableCompletionItem(tbl, '0_', wordRange));
+          items.push(this.createTableCompletionItem(tbl, '1_', wordRange));
         }
         if (config.suggestDuckDBFunctions) {
-          items.push(...this.getDuckDBTableFunctions('1_', wordRange));
+          items.push(...this.getDuckDBTableFunctions('2_', wordRange));
         }
         break;
       }
@@ -121,7 +157,8 @@ export class DuckLakeCompletionProvider implements vscode.CompletionItemProvider
   private createTableCompletionItem(table: TableMetadata, sortPrefix: string, range?: vscode.Range): vscode.CompletionItem {
     const isView = (table.type || '').toUpperCase().includes('VIEW');
     const item = new vscode.CompletionItem(table.name, isView ? vscode.CompletionItemKind.Interface : vscode.CompletionItemKind.Class);
-    item.detail = `${isView ? 'DuckLake / Postgres View' : 'DuckLake Table'} (${table.schema})`;
+    const dbSuffix = table.databaseAlias ? ` • ${table.databaseAlias}` : '';
+    item.detail = `${isView ? 'DuckLake / Postgres View' : 'DuckLake Table'} (${table.schema}${dbSuffix})`;
     item.sortText = `${sortPrefix}${table.name}`;
     if (range) {
       item.range = range;

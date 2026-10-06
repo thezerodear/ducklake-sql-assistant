@@ -11,13 +11,20 @@ export class DuckLakeConnectionWebview {
   private readonly extensionUri: vscode.Uri;
   private disposables: vscode.Disposable[] = [];
 
-  public static show(extensionUri: vscode.Uri, schemaManager: SchemaManager) {
+  private currentConfig: PostgresConfig;
+
+  public static show(extensionUri: vscode.Uri, schemaManager: SchemaManager, targetConnName?: string, isNew?: boolean) {
     const column = vscode.window.activeTextEditor
       ? vscode.window.activeTextEditor.viewColumn
       : undefined;
 
     if (DuckLakeConnectionWebview.currentPanel) {
       DuckLakeConnectionWebview.currentPanel.panel.reveal(column);
+      if (isNew) {
+        DuckLakeConnectionWebview.currentPanel.loadNewProfile();
+      } else if (targetConnName) {
+        DuckLakeConnectionWebview.currentPanel.loadProfile(targetConnName);
+      }
       return;
     }
 
@@ -35,26 +42,48 @@ export class DuckLakeConnectionWebview {
     DuckLakeConnectionWebview.currentPanel = new DuckLakeConnectionWebview(
       panel,
       extensionUri,
-      schemaManager
+      schemaManager,
+      targetConnName,
+      isNew
     );
   }
 
   private constructor(
     panel: vscode.WebviewPanel,
     extensionUri: vscode.Uri,
-    private schemaManager: SchemaManager
+    private schemaManager: SchemaManager,
+    targetConnName?: string,
+    isNew?: boolean
   ) {
     this.panel = panel;
     this.extensionUri = extensionUri;
 
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
 
-    const currentConfig = this.schemaManager.readConfig();
-    this.panel.webview.html = this.getHtmlContent(currentConfig);
+    if (isNew) {
+      this.currentConfig = this.createNewProfileTemplate();
+      this.panel.webview.html = this.getHtmlContent(this.currentConfig, true);
+    } else if (targetConnName) {
+      const found = ConfigStorage.getConnection(targetConnName);
+      this.currentConfig = found || this.schemaManager.readConfig();
+      this.panel.webview.html = this.getHtmlContent(this.currentConfig, false);
+    } else {
+      this.currentConfig = this.schemaManager.readConfig();
+      this.panel.webview.html = this.getHtmlContent(this.currentConfig, false);
+    }
 
     this.panel.webview.onDidReceiveMessage(
       async (message) => {
         switch (message.command) {
+          case 'selectProfile':
+            this.loadProfile(message.name);
+            break;
+          case 'newProfile':
+            this.loadNewProfile();
+            break;
+          case 'deleteProfile':
+            await this.handleDelete(message.name);
+            break;
           case 'test':
             await this.handleTest(message.data);
             break;
@@ -81,6 +110,57 @@ export class DuckLakeConnectionWebview {
       null,
       this.disposables
     );
+  }
+
+  private createNewProfileTemplate(): PostgresConfig {
+    const existing = ConfigStorage.getAllConnections().map(c => c.connectionName || c.databaseAlias);
+    let nextIdx = existing.length + 1;
+    while (existing.includes(`lake_${nextIdx}`)) {
+      nextIdx++;
+    }
+    const newName = `lake_${nextIdx}`;
+    return {
+      ...this.schemaManager.readConfig(),
+      connectionName: newName,
+      databaseAlias: newName,
+      password: '',
+      catalogType: 'server',
+      database: 'ducklake_catalog',
+      duckdbDatabasePath: '',
+      dataPath: '',
+      overrideDataPath: false
+    };
+  }
+
+  private loadProfile(name: string): void {
+    const found = ConfigStorage.getConnection(name);
+    if (found) {
+      this.currentConfig = found;
+      this.panel.webview.html = this.getHtmlContent(found, false);
+    }
+  }
+
+  private loadNewProfile(): void {
+    this.currentConfig = this.createNewProfileTemplate();
+    this.panel.webview.html = this.getHtmlContent(this.currentConfig, true);
+  }
+
+  private async handleDelete(name: string): Promise<void> {
+    const confirm = await vscode.window.showWarningMessage(
+      `Are you sure you want to delete database connection "${name}"?`,
+      { modal: true },
+      'Delete',
+      'Cancel'
+    );
+    if (confirm === 'Delete') {
+      const ok = await ConfigStorage.removeConnection(name);
+      if (ok) {
+        await this.schemaManager.refreshCatalog(false);
+        vscode.window.showInformationMessage(`DuckLake: Connection "${name}" removed.`);
+        this.currentConfig = this.schemaManager.readConfig();
+        this.panel.webview.html = this.getHtmlContent(this.currentConfig, false);
+      }
+    }
   }
 
   private async handleCopyPythonCode(data: any): Promise<void> {
@@ -267,7 +347,9 @@ con.sql("SHOW TABLES;").show()
         };
       }
 
-      await ConfigStorage.saveConfig(newConfig);
+      const previousName = data.previousName?.trim();
+      const makeActive = data.makeActive !== false;
+      await ConfigStorage.saveConfig(newConfig, makeActive, previousName);
 
       // Refresh catalog with new parameters
       await this.schemaManager.refreshCatalog(false);
@@ -296,7 +378,9 @@ con.sql("SHOW TABLES;").show()
     }
   }
 
-  private getHtmlContent(config: PostgresConfig): string {
+  private getHtmlContent(config: PostgresConfig, isNewProfile: boolean = false): string {
+    const allConns = ConfigStorage.getAllConnections();
+    const activeConnName = ConfigStorage.getActiveConnectionName();
     const connName = config.connectionName || 'lake';
     const isLocal = config.catalogType === 'local';
     const catalogConn = isLocal
@@ -326,7 +410,7 @@ con.sql("SHOW TABLES;").show()
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Edit: ${escapeHtml(connName)}</title>
+  <title>${isNewProfile ? 'Add New Database' : 'Edit: ' + escapeHtml(connName)}</title>
   <style>
     :root {
       --bg: #141517;
@@ -367,6 +451,76 @@ con.sql("SHOW TABLES;").show()
       border-radius: 10px;
       padding: 24px 28px;
       box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+    }
+
+    /* Database Profile Tabs */
+    .db-tabs-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 20px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border-color);
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+    .db-tab-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      background: #18191d;
+      border: 1px solid var(--input-border);
+      border-radius: 6px;
+      color: var(--text-muted);
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .db-tab-btn:hover {
+      background: #242730;
+      color: #fff;
+      border-color: #3b4252;
+    }
+    .db-tab-btn.active {
+      background: rgba(2, 136, 209, 0.18);
+      border-color: var(--accent);
+      color: #38bdf8;
+      font-weight: 600;
+    }
+    .db-tab-badge {
+      background: var(--accent);
+      color: #fff;
+      font-size: 9.5px;
+      padding: 1px 5px;
+      border-radius: 10px;
+      margin-left: 3px;
+    }
+    .db-tab-add {
+      background: transparent;
+      border: 1px dashed #3b4252;
+      color: #38bdf8;
+    }
+    .db-tab-add:hover {
+      background: rgba(56, 189, 248, 0.1);
+      border-color: #38bdf8;
+    }
+    .btn-danger {
+      background: rgba(239, 68, 68, 0.12);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      color: #f87171;
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-size: 12.5px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      transition: all 0.15s;
+    }
+    .btn-danger:hover {
+      background: #ef4444;
+      color: #fff;
     }
 
     /* Header */
@@ -821,7 +975,7 @@ con.sql("SHOW TABLES;").show()
       <div class="header-left">
         <button class="btn-back" id="btnBack" title="Cancel & Close">←</button>
         <div class="brand-icon">🦆</div>
-        <div class="header-title" id="headerTitle">Edit: ${escapeHtml(connName)}</div>
+        <div class="header-title" id="headerTitle">${isNewProfile ? 'Add New Database' : 'Edit: ' + escapeHtml(connName)}</div>
       </div>
       <div style="display: flex; gap: 8px;">
         <button class="import-link" id="btnOpenConfig" title="Open configuration file (connections.json)">
@@ -831,6 +985,23 @@ con.sql("SHOW TABLES;").show()
           <span>🔗</span> Import connection string
         </button>
       </div>
+    </div>
+
+    <!-- Databases Profile Switcher Tabs -->
+    <div class="db-tabs-bar">
+      ${allConns.map(c => {
+        const name = c.connectionName || 'lake';
+        const isCurrent = name === connName && !isNewProfile;
+        const isActive = name === activeConnName;
+        return `<button type="button" class="db-tab-btn ${isCurrent ? 'active' : ''}" data-name="${escapeHtml(name)}" title="Manage ${escapeHtml(name)}">
+          <span>🗄️</span>
+          <span>${escapeHtml(name)}</span>
+          ${isActive ? '<span class="db-tab-badge">Active</span>' : ''}
+        </button>`;
+      }).join('')}
+      <button type="button" class="db-tab-btn db-tab-add ${isNewProfile ? 'active' : ''}" id="btnNewDbTab" title="Add a new database connection">
+        <span>➕ Add Database</span>
+      </button>
     </div>
 
     <!-- Connection Name -->
@@ -895,6 +1066,18 @@ con.sql("SHOW TABLES;").show()
       <input type="text" id="dbAlias" value="${escapeHtml(databaseAlias)}" placeholder="lake" />
     </div>
 
+    <!-- Set as Active Database Switch -->
+    <div class="switch-container">
+      <div class="switch-info">
+        <div class="switch-title">Set as Active Database</div>
+        <div class="switch-desc">Primary database for default query autocompletion and single-table references.</div>
+      </div>
+      <label class="switch-pill">
+        <input type="checkbox" id="makeActiveSwitch" ${connName === activeConnName || isNewProfile ? 'checked' : ''}>
+        <span class="slider"></span>
+      </label>
+    </div>
+
     <!-- Advanced Settings Accordion -->
     <div class="accordion-header" id="accToggle" style="display: ${isLocal ? 'none' : 'flex'};">
       <span>⚙️ Connection Parameters (Host, Port, Database, User, Password)</span>
@@ -942,8 +1125,13 @@ con.sql("SHOW TABLES;").show()
       </div>
 
       <div class="footer-right">
+        ${allConns.length > 1 && !isNewProfile ? `
+          <button type="button" class="btn-danger" id="btnDelete" title="Remove this database profile">
+            <span>🗑️</span> Delete
+          </button>
+        ` : ''}
         <button class="btn-cancel" id="btnCancel">Cancel</button>
-        <button class="btn-save" id="btnSave">Save connection</button>
+        <button class="btn-save" id="btnSave">${isNewProfile ? 'Add Database' : 'Save connection'}</button>
       </div>
     </div>
 
@@ -1104,9 +1292,13 @@ con.sql("SHOW TABLES;").show()
       syncToAdvanced(catalogConnInput.value.trim());
     });
 
+    const makeActiveSwitch = document.getElementById('makeActiveSwitch');
+
     function getFormData() {
       return {
         connectionName: connNameInput.value.trim() || 'lake',
+        previousName: ${isNewProfile ? 'undefined' : `'${escapeHtml(connName)}'`},
+        makeActive: makeActiveSwitch ? makeActiveSwitch.checked : true,
         catalogType: selectedCatalogType,
         catalogConnection: catalogConnInput.value.trim(),
         dataPath: dataPathInput.value.trim(),
@@ -1118,6 +1310,30 @@ con.sql("SHOW TABLES;").show()
         user: advUser.value.trim(),
         password: advPass.value
       };
+    }
+
+    // Database tab buttons
+    document.querySelectorAll('.db-tab-btn[data-name]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const name = btn.getAttribute('data-name');
+        if (name) {
+          vscode.postMessage({ command: 'selectProfile', name });
+        }
+      });
+    });
+
+    const btnNewDbTab = document.getElementById('btnNewDbTab');
+    if (btnNewDbTab) {
+      btnNewDbTab.addEventListener('click', () => {
+        vscode.postMessage({ command: 'newProfile' });
+      });
+    }
+
+    const btnDelete = document.getElementById('btnDelete');
+    if (btnDelete) {
+      btnDelete.addEventListener('click', () => {
+        vscode.postMessage({ command: 'deleteProfile', name: '${escapeHtml(connName)}' });
+      });
     }
 
     // Browse buttons

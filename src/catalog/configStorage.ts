@@ -142,7 +142,7 @@ export class ConfigStorage {
     };
   }
 
-  public static async saveConfig(config: PostgresConfig): Promise<void> {
+  public static async saveConfig(config: PostgresConfig, makeActive: boolean = true, previousName?: string): Promise<void> {
     const filePath = ConfigStorage.getStorageFilePath();
     const dir = path.dirname(filePath);
     if (!fs.existsSync(dir)) {
@@ -171,11 +171,14 @@ export class ConfigStorage {
         connections: [normalizedConfig]
       };
     } else {
-      fileData.activeConnection = targetName;
+      if (makeActive || !fileData.activeConnection) {
+        fileData.activeConnection = targetName;
+      }
       if (!Array.isArray(fileData.connections)) {
         fileData.connections = [];
       }
-      const idx = fileData.connections.findIndex(c => c.connectionName === targetName);
+      const lookupName = previousName || targetName;
+      const idx = fileData.connections.findIndex(c => c.connectionName === lookupName);
       if (idx >= 0) {
         fileData.connections[idx] = { ...fileData.connections[idx], ...normalizedConfig };
       } else {
@@ -202,19 +205,72 @@ export class ConfigStorage {
     return [ConfigStorage.readFromVscodeSettings()];
   }
 
+  public static getActiveConnectionName(): string {
+    const fileData = ConfigStorage.loadConnectionsFile();
+    if (fileData?.activeConnection) {
+      return fileData.activeConnection;
+    }
+    const conns = ConfigStorage.getAllConnections();
+    return conns[0]?.connectionName || 'lake';
+  }
+
+  public static getConnection(name: string): PostgresConfig | undefined {
+    const conns = ConfigStorage.getAllConnections();
+    const clean = (name || '').toLowerCase().trim();
+    return conns.find(c =>
+      (c.connectionName && c.connectionName.toLowerCase() === clean) ||
+      (c.databaseAlias && c.databaseAlias.toLowerCase() === clean)
+    );
+  }
+
+  public static async removeConnection(name: string): Promise<boolean> {
+    const fileData = ConfigStorage.loadConnectionsFile();
+    if (!fileData || !fileData.connections || fileData.connections.length <= 1) {
+      return false; // Don't delete if only 1 connection or not found
+    }
+    const idx = fileData.connections.findIndex(
+      c => c.connectionName === name || c.databaseAlias === name
+    );
+    if (idx === -1) {
+      return false;
+    }
+    fileData.connections.splice(idx, 1);
+    if (fileData.activeConnection === name) {
+      fileData.activeConnection = fileData.connections[0]?.connectionName || 'lake';
+    }
+    const filePath = ConfigStorage.getStorageFilePath();
+    ConfigStorage.isInternalSaving = true;
+    try {
+      fs.writeFileSync(filePath, JSON.stringify(fileData, null, 2), 'utf-8');
+      ConfigStorage._onDidChangeConfig.fire(ConfigStorage.loadConfig());
+      return true;
+    } finally {
+      setTimeout(() => {
+        ConfigStorage.isInternalSaving = false;
+      }, 500);
+    }
+  }
+
   public static async setActiveConnection(name: string): Promise<boolean> {
     const fileData = ConfigStorage.loadConnectionsFile();
     if (!fileData || !fileData.connections) {
       return false;
     }
-    const found = fileData.connections.find(c => c.connectionName === name);
+    const found = fileData.connections.find(c => c.connectionName === name || c.databaseAlias === name);
     if (!found) {
       return false;
     }
-    fileData.activeConnection = name;
+    fileData.activeConnection = found.connectionName;
     const filePath = ConfigStorage.getStorageFilePath();
-    fs.writeFileSync(filePath, JSON.stringify(fileData, null, 2), 'utf-8');
-    ConfigStorage._onDidChangeConfig.fire(ConfigStorage.loadConfig());
-    return true;
+    ConfigStorage.isInternalSaving = true;
+    try {
+      fs.writeFileSync(filePath, JSON.stringify(fileData, null, 2), 'utf-8');
+      ConfigStorage._onDidChangeConfig.fire(ConfigStorage.loadConfig());
+      return true;
+    } finally {
+      setTimeout(() => {
+        ConfigStorage.isInternalSaving = false;
+      }, 500);
+    }
   }
 }

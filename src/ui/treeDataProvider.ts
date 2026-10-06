@@ -19,6 +19,7 @@ export class CatalogTreeItem extends vscode.TreeItem {
     public readonly nodeType: NodeType,
     public readonly collapsibleState: vscode.TreeItemCollapsibleState,
     public readonly metadata?: {
+      database?: string;
       schema?: string;
       table?: TableMetadata;
       column?: ColumnMetadata;
@@ -34,7 +35,9 @@ export class CatalogTreeItem extends vscode.TreeItem {
     switch (this.nodeType) {
       case 'database':
         this.iconPath = new vscode.ThemeIcon('database', new vscode.ThemeColor('charts.blue'));
-        this.description = 'Default, Type: ducklake';
+        if (!this.description) {
+          this.description = 'Type: ducklake';
+        }
         break;
 
       case 'schemasGroup':
@@ -121,14 +124,9 @@ export class DuckLakeTreeDataProvider implements vscode.TreeDataProvider<Catalog
     return element;
   }
 
-  public async getChildren(element?: CatalogTreeItem): Promise<CatalogTreeItem[]> {
-    const allItems = this.schemaManager.getTables();
-    const config = this.schemaManager.readConfig();
-    const dbAlias = config.databaseAlias || config.connectionName || 'lake';
-
-    // Group tables & views by schema
+  private groupTablesBySchema(tables: TableMetadata[]): Map<string, SchemaGroup> {
     const schemasMap = new Map<string, SchemaGroup>();
-    for (const item of allItems) {
+    for (const item of tables) {
       const s = item.schema || 'main';
       if (!schemasMap.has(s)) {
         schemasMap.set(s, { tables: [], views: [] });
@@ -144,29 +142,84 @@ export class DuckLakeTreeDataProvider implements vscode.TreeDataProvider<Catalog
     if (schemasMap.size === 0) {
       schemasMap.set('main', { tables: [], views: [] });
     }
+    return schemasMap;
+  }
 
-    // 1. Root Level -> Database node (e.g. "lake")
+  public async getChildren(element?: CatalogTreeItem): Promise<CatalogTreeItem[]> {
+    const databases = this.schemaManager.getDatabases();
+    const activeDbName = this.schemaManager.getActiveDatabaseName().toLowerCase();
+
+    // 1. Root Level -> List of Databases
     if (!element) {
-      return [
-        new CatalogTreeItem(dbAlias, 'database', vscode.TreeItemCollapsibleState.Expanded)
-      ];
+      if (databases.length === 0) {
+        const config = this.schemaManager.readConfig();
+        const dbAlias = config.databaseAlias || config.connectionName || 'lake';
+        const defaultItem = new CatalogTreeItem(dbAlias, 'database', vscode.TreeItemCollapsibleState.Expanded, {
+          database: config.connectionName || 'lake',
+          extra: dbAlias
+        });
+        defaultItem.contextValue = 'databaseActive';
+        defaultItem.description = 'Active • Type: ducklake';
+        return [defaultItem];
+      }
+
+      return databases.map(db => {
+        const isActive =
+          db.connectionName.toLowerCase() === activeDbName ||
+          db.databaseAlias.toLowerCase() === activeDbName;
+        const label = db.databaseAlias || db.connectionName;
+        const isExpanded = isActive || databases.length === 1;
+
+        const item = new CatalogTreeItem(
+          label,
+          'database',
+          isExpanded ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed,
+          {
+            database: db.connectionName,
+            extra: db.databaseAlias
+          }
+        );
+
+        item.contextValue = isActive ? 'databaseActive' : 'database';
+        const typeStr = db.catalogType === 'local' ? 'local DuckDB' : 'ducklake';
+
+        if (db.status === 'error') {
+          item.iconPath = new vscode.ThemeIcon('database', new vscode.ThemeColor('charts.red'));
+          item.description = `${isActive ? 'Active • ' : ''}${typeStr} (Error)`;
+          item.tooltip = `Database: ${db.connectionName}\nAlias: ${db.databaseAlias}\nStatus: ERROR\nError: ${db.errorMessage || 'Connection failed'}`;
+        } else {
+          item.iconPath = new vscode.ThemeIcon('database', isActive ? new vscode.ThemeColor('charts.blue') : new vscode.ThemeColor('charts.green'));
+          item.description = `${isActive ? 'Active • ' : ''}${typeStr} (${db.tables.length} tables)`;
+          item.tooltip = `Database: ${db.connectionName}\nAlias: ${db.databaseAlias}\nStatus: ${db.status}\nTables: ${db.tables.length}`;
+        }
+
+        return item;
+      });
     }
 
     // 2. Under Database -> Schemas folder
     if (element.nodeType === 'database') {
+      const dbKey = element.metadata?.database;
+      const dbTables = this.schemaManager.getTables(dbKey);
+      const schemasMap = this.groupTablesBySchema(dbTables);
+
       return [
         new CatalogTreeItem(
           'Schemas',
           'schemasGroup',
           vscode.TreeItemCollapsibleState.Expanded,
-          { extra: `${schemasMap.size}` }
+          { database: dbKey, extra: `${schemasMap.size}` }
         )
       ];
     }
 
     // 3. Under Schemas folder -> Schema items (e.g. "main", "public", etc.)
     if (element.nodeType === 'schemasGroup') {
+      const dbKey = element.metadata?.database;
+      const dbTables = this.schemaManager.getTables(dbKey);
+      const schemasMap = this.groupTablesBySchema(dbTables);
       const schemaItems: CatalogTreeItem[] = [];
+
       for (const [schemaName, group] of schemasMap) {
         const totalItems = group.tables.length + group.views.length;
         schemaItems.push(
@@ -174,7 +227,7 @@ export class DuckLakeTreeDataProvider implements vscode.TreeDataProvider<Catalog
             schemaName,
             'schema',
             vscode.TreeItemCollapsibleState.Expanded,
-            { schema: schemaName, extra: `${totalItems}` }
+            { database: dbKey, schema: schemaName, extra: `${totalItems}` }
           )
         );
       }
@@ -183,51 +236,66 @@ export class DuckLakeTreeDataProvider implements vscode.TreeDataProvider<Catalog
 
     // 4. Under Schema -> Tables folder, Views folder, Functions folder
     if (element.nodeType === 'schema') {
+      const dbKey = element.metadata?.database;
       const schemaName = element.metadata?.schema || 'main';
+      const dbTables = this.schemaManager.getTables(dbKey);
+      const schemasMap = this.groupTablesBySchema(dbTables);
       const group = schemasMap.get(schemaName) || { tables: [], views: [] };
+
       return [
         new CatalogTreeItem(
           'Tables',
           'tablesGroup',
           group.tables.length > 0 ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed,
-          { schema: schemaName, extra: `${group.tables.length}` }
+          { database: dbKey, schema: schemaName, extra: `${group.tables.length}` }
         ),
         new CatalogTreeItem(
           'Views',
           'viewsGroup',
           group.views.length > 0 ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed,
-          { schema: schemaName, extra: `${group.views.length}` }
+          { database: dbKey, schema: schemaName, extra: `${group.views.length}` }
         ),
-        new CatalogTreeItem('Functions', 'functionsGroup', vscode.TreeItemCollapsibleState.Collapsed)
+        new CatalogTreeItem('Functions', 'functionsGroup', vscode.TreeItemCollapsibleState.Collapsed, {
+          database: dbKey,
+          schema: schemaName
+        })
       ];
     }
 
     // 5. Under Tables folder -> Table items
     if (element.nodeType === 'tablesGroup') {
+      const dbKey = element.metadata?.database;
       const schemaName = element.metadata?.schema || 'main';
+      const dbTables = this.schemaManager.getTables(dbKey);
+      const schemasMap = this.groupTablesBySchema(dbTables);
       const group = schemasMap.get(schemaName) || { tables: [], views: [] };
+
       return group.tables.map(
         (t) =>
           new CatalogTreeItem(
             t.name,
             'table',
             vscode.TreeItemCollapsibleState.Collapsed,
-            { table: t, schema: schemaName }
+            { database: dbKey, table: t, schema: schemaName }
           )
       );
     }
 
     // 5b. Under Views folder -> View items
     if (element.nodeType === 'viewsGroup') {
+      const dbKey = element.metadata?.database;
       const schemaName = element.metadata?.schema || 'main';
+      const dbTables = this.schemaManager.getTables(dbKey);
+      const schemasMap = this.groupTablesBySchema(dbTables);
       const group = schemasMap.get(schemaName) || { tables: [], views: [] };
+
       return group.views.map(
         (v) =>
           new CatalogTreeItem(
             v.name,
             'view',
             vscode.TreeItemCollapsibleState.Collapsed,
-            { table: v, schema: schemaName }
+            { database: dbKey, table: v, schema: schemaName }
           )
       );
     }
@@ -241,7 +309,7 @@ export class DuckLakeTreeDataProvider implements vscode.TreeDataProvider<Catalog
             c.name,
             'column',
             vscode.TreeItemCollapsibleState.None,
-            { column: c, table: element.metadata?.table }
+            { database: element.metadata?.database, column: c, table: element.metadata?.table }
           )
       );
     }

@@ -239,6 +239,87 @@ con.sql("SHOW TABLES;").show()
     treeDataProvider.refresh();
   });
 
+  const addDatabaseCommand = vscode.commands.registerCommand('ducklake.addDatabase', () => {
+    DuckLakeConnectionWebview.show(context.extensionUri, schemaManager, undefined, true);
+  });
+
+  const setActiveDatabaseCommand = vscode.commands.registerCommand(
+    'ducklake.setActiveDatabase',
+    async (item?: CatalogTreeItem) => {
+      const dbName = item?.metadata?.database || item?.label;
+      if (!dbName) return;
+      await schemaManager.setActiveDatabase(dbName);
+      treeDataProvider.refresh();
+      vscode.window.showInformationMessage(`DuckLake: Active database switched to "${dbName}".`);
+    }
+  );
+
+  const refreshDatabaseCommand = vscode.commands.registerCommand(
+    'ducklake.refreshDatabase',
+    async (item?: CatalogTreeItem) => {
+      const dbName = item?.metadata?.database || item?.label;
+      await schemaManager.refreshCatalog(false, dbName);
+      treeDataProvider.refresh();
+    }
+  );
+
+  const editDatabaseCommand = vscode.commands.registerCommand(
+    'ducklake.editDatabase',
+    (item?: CatalogTreeItem) => {
+      const dbName = item?.metadata?.database || item?.label;
+      DuckLakeConnectionWebview.show(context.extensionUri, schemaManager, dbName, false);
+    }
+  );
+
+  const deleteDatabaseCommand = vscode.commands.registerCommand(
+    'ducklake.deleteDatabase',
+    async (item?: CatalogTreeItem) => {
+      const dbName = item?.metadata?.database || item?.label;
+      if (!dbName) return;
+      const confirm = await vscode.window.showWarningMessage(
+        `Are you sure you want to delete database connection "${dbName}"?`,
+        { modal: true },
+        'Delete',
+        'Cancel'
+      );
+      if (confirm === 'Delete') {
+        const ok = await ConfigStorage.removeConnection(dbName);
+        if (ok) {
+          await schemaManager.refreshCatalog(false);
+          treeDataProvider.refresh();
+          vscode.window.showInformationMessage(`DuckLake: Database "${dbName}" deleted.`);
+        }
+      }
+    }
+  );
+
+  const copyDatabaseAttachCodeCommand = vscode.commands.registerCommand(
+    'ducklake.copyDatabaseAttachCode',
+    async (item?: CatalogTreeItem) => {
+      const dbName = item?.metadata?.database || item?.label;
+      const config = dbName ? schemaManager.readConfig(dbName) : schemaManager.readConfig();
+      const isLocal = config.catalogType === 'local';
+      const alias = config.databaseAlias || config.connectionName || 'lake';
+
+      let snippet = '';
+      if (isLocal) {
+        const dbPath = config.duckdbDatabasePath || 'ducklake.db';
+        snippet = `ATTACH '${dbPath.replace(/\\/g, '/')}' AS ${alias};\nUSE ${alias};\nSHOW TABLES;`;
+      } else {
+        const connStr = config.connectionString ||
+          `dbname=${config.database} host=${config.host} port=${config.port} user=${config.user} password=${config.password}`;
+        let dataPathClause = '';
+        if (config.dataPath && config.overrideDataPath) {
+          const cleanPath = config.dataPath.replace(/\\/g, '/');
+          dataPathClause = ` (DATA_PATH '${cleanPath}')`;
+        }
+        snippet = `ATTACH 'ducklake:postgres:${connStr}' AS ${alias}${dataPathClause};\nUSE ${alias};\nSHOW TABLES;`;
+      }
+      await vscode.env.clipboard.writeText(snippet);
+      vscode.window.showInformationMessage(`DuckLake: ATTACH SQL code for "${alias}" copied to clipboard!`);
+    }
+  );
+
   context.subscriptions.push(
     schemaManager,
     statusBar,
@@ -256,6 +337,12 @@ con.sql("SHOW TABLES;").show()
     insertColumnNameCommand,
     copyNameCommand,
     createMockDbCommand,
+    addDatabaseCommand,
+    setActiveDatabaseCommand,
+    refreshDatabaseCommand,
+    editDatabaseCommand,
+    deleteDatabaseCommand,
+    copyDatabaseAttachCodeCommand,
     configWatcher,
     storageWatcher
   );

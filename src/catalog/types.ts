@@ -16,6 +16,18 @@ export interface TableMetadata {
   rowCount?: number;
   fileSizeBytes?: number;
   viewDefinition?: string;
+  databaseAlias?: string;
+}
+
+export interface DatabaseCatalog {
+  connectionName: string;
+  databaseAlias: string;
+  status: ConnectionState;
+  catalogType: 'server' | 'local';
+  tables: TableMetadata[];
+  lastRefreshed?: Date;
+  errorMessage?: string;
+  config: PostgresConfig;
 }
 
 export interface PostgresConfig {
@@ -45,7 +57,10 @@ export type ConnectionState = 'connected' | 'connecting' | 'disconnected' | 'err
 
 export interface CatalogState {
   status: ConnectionState;
-  tables: Map<string, TableMetadata>; // keyed by tableName and fullName
+  tables: Map<string, TableMetadata>; // keyed by tableName, fullName, and db.fullName
+  databases: Map<string, DatabaseCatalog>;
+  activeDatabase?: string;
   lastRefreshed?: Date;
   errorMessage?: string;
 }
+
