@@ -1,9 +1,6 @@
 import { Client, ClientConfig } from 'pg';
 import { TableMetadata, ColumnMetadata, PostgresConfig } from './types';
 
-// Force PostgreSQL client protocol to use UTF-8 across all platforms, preventing WIN874 / CP874 mismatch
-process.env.PGCLIENTENCODING = 'UTF8';
-
 export class PostgresCatalogClient {
   private config: PostgresConfig;
 
@@ -70,32 +67,29 @@ export class PostgresCatalogClient {
       }
     }
 
-    // Auto strategy:
-    // 1. Try UTF8 first (the universal standard supporting Thai WIN874, CJK, Latin, Cyrillic, Emoji, etc.)
+    // Auto strategy: Query the active client encoding directly without forcing UTF-8 conversion
     try {
-      await client.query("SET client_encoding = 'UTF8';");
-      return 'UTF8';
-    } catch (utf8Err) {
-      // 2. If server cannot convert to UTF8, detect server_encoding and match it natively
-      try {
-        const res = await client.query('SHOW server_encoding;');
-        const serverEnc = res.rows[0]?.server_encoding;
-        if (serverEnc) {
-          const safeServerEnc = String(serverEnc).replace(/[^a-zA-Z0-9_-]/g, '');
-          await client.query(`SET client_encoding = '${safeServerEnc}';`);
-          return safeServerEnc;
-        }
-      } catch (_) {
-        // ignore
+      const res = await client.query('SHOW client_encoding;');
+      const activeEnc = res.rows[0]?.client_encoding;
+      if (activeEnc) {
+        return activeEnc;
       }
-      return 'default';
+    } catch (_) {
+      // ignore
+    }
+
+    try {
+      const res = await client.query('SHOW server_encoding;');
+      return res.rows[0]?.server_encoding || 'WIN874';
+    } catch (_) {
+      return 'WIN874';
     }
   }
 
   private createClient(): Client {
     const enc = this.config.clientEncoding && this.config.clientEncoding.toLowerCase() !== 'auto'
       ? this.config.clientEncoding
-      : 'UTF8';
+      : 'WIN874';
     process.env.PGCLIENTENCODING = enc;
     const clientOptions = `-c client_encoding=${enc}`;
 
