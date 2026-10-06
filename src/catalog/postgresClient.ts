@@ -1,6 +1,43 @@
 import { Client, ClientConfig } from 'pg';
 import { TableMetadata, ColumnMetadata, PostgresConfig } from './types';
 
+// Patch pg-protocol's BufferReader to decode WIN874 / CP874 natively when requested
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { BufferReader } = require('pg-protocol/dist/buffer-reader');
+  if (BufferReader && !(BufferReader as any).__win874Patched) {
+    (BufferReader as any).__win874Patched = true;
+    const origString = BufferReader.prototype.string;
+    const origCstring = BufferReader.prototype.cstring;
+    const thaiDecoder = new TextDecoder('windows-874');
+
+    BufferReader.prototype.string = function (length: number): string {
+      const enc = (process.env.PGCLIENTENCODING || '').toUpperCase();
+      if (enc === 'WIN874' || enc === 'TIS620' || enc === 'WINDOWS-874') {
+        const slice = this.buffer.subarray(this.offset, this.offset + length);
+        this.offset += length;
+        return thaiDecoder.decode(slice);
+      }
+      return origString.call(this, length);
+    };
+
+    BufferReader.prototype.cstring = function (): string {
+      const enc = (process.env.PGCLIENTENCODING || '').toUpperCase();
+      if (enc === 'WIN874' || enc === 'TIS620' || enc === 'WINDOWS-874') {
+        const start = this.offset;
+        let end = start;
+        while (this.buffer[end++]) {}
+        this.offset = end;
+        const slice = this.buffer.subarray(start, end - 1);
+        return thaiDecoder.decode(slice);
+      }
+      return origCstring.call(this);
+    };
+  }
+} catch (_) {
+  // ignore if pg-protocol internals are not accessible
+}
+
 export class PostgresCatalogClient {
   private config: PostgresConfig;
 
