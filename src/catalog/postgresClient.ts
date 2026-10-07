@@ -1,35 +1,93 @@
 import { Client, ClientConfig } from 'pg';
+import { TextDecoder } from 'util';
 import { TableMetadata, ColumnMetadata, PostgresConfig } from './types';
 
-// Patch pg-protocol's BufferReader to decode WIN874 / CP874 natively when requested
+// Cache for TextDecoders across different charsets
+const textDecoderCache = new Map<string, TextDecoder>();
+
+function getDecoder(encoding: string): TextDecoder | null {
+  const norm = (encoding || '').toUpperCase().trim();
+  if (!norm || norm === 'UTF8' || norm === 'UTF-8' || norm === 'UNICODE') {
+    return null; // UTF-8 is decoded natively by BufferReader / Buffer.toString('utf-8')
+  }
+
+  // Map PostgreSQL encoding names to WHATWG TextDecoder encoding names
+  const encodingMap: Record<string, string> = {
+    'WIN874': 'windows-874',
+    'WINDOWS-874': 'windows-874',
+    'CP874': 'windows-874',
+    'TIS620': 'windows-874',
+    'TIS-620': 'windows-874',
+    'WIN1252': 'windows-1252',
+    'WINDOWS-1252': 'windows-1252',
+    'CP1252': 'windows-1252',
+    'LATIN1': 'iso-8859-1',
+    'ISO-8859-1': 'iso-8859-1',
+    'WIN1251': 'windows-1251',
+    'GBK': 'gbk',
+    'GB18030': 'gb18030',
+    'BIG5': 'big5',
+    'SJIS': 'shift_jis',
+    'SHIFT_JIS': 'shift_jis',
+    'WIN932': 'shift_jis',
+    'EUC_JP': 'euc-jp',
+    'EUC_KR': 'euc-kr'
+  };
+
+  const whatwgName = encodingMap[norm] || norm.toLowerCase();
+  if (textDecoderCache.has(whatwgName)) {
+    return textDecoderCache.get(whatwgName)!;
+  }
+
+  try {
+    const decoder = new TextDecoder(whatwgName, { fatal: false });
+    textDecoderCache.set(whatwgName, decoder);
+    return decoder;
+  } catch {
+    return null;
+  }
+}
+
+// Patch pg-protocol's BufferReader to decode WIN874 / CP874 and other non-UTF8 encodings natively
 try {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { BufferReader } = require('pg-protocol/dist/buffer-reader');
-  if (BufferReader && !(BufferReader as any).__win874Patched) {
-    (BufferReader as any).__win874Patched = true;
+  if (BufferReader && !(BufferReader as any).__encodingPatched) {
+    (BufferReader as any).__encodingPatched = true;
     const origString = BufferReader.prototype.string;
     const origCstring = BufferReader.prototype.cstring;
-    const thaiDecoder = new TextDecoder('windows-874');
 
     BufferReader.prototype.string = function (length: number): string {
       const enc = (process.env.PGCLIENTENCODING || '').toUpperCase();
-      if (enc === 'WIN874' || enc === 'TIS620' || enc === 'WINDOWS-874') {
+      let decoder = getDecoder(enc);
+      if (!decoder && (enc === 'SQL_ASCII' || enc === 'ASCII')) {
+        const fallback = (process.env.PG_SERVER_ENCODING || 'WIN874').toUpperCase();
+        decoder = getDecoder(fallback);
+      }
+
+      if (decoder) {
         const slice = this.buffer.subarray(this.offset, this.offset + length);
         this.offset += length;
-        return thaiDecoder.decode(slice);
+        return decoder.decode(slice);
       }
       return origString.call(this, length);
     };
 
     BufferReader.prototype.cstring = function (): string {
       const enc = (process.env.PGCLIENTENCODING || '').toUpperCase();
-      if (enc === 'WIN874' || enc === 'TIS620' || enc === 'WINDOWS-874') {
+      let decoder = getDecoder(enc);
+      if (!decoder && (enc === 'SQL_ASCII' || enc === 'ASCII')) {
+        const fallback = (process.env.PG_SERVER_ENCODING || 'WIN874').toUpperCase();
+        decoder = getDecoder(fallback);
+      }
+
+      if (decoder) {
         const start = this.offset;
         let end = start;
-        while (this.buffer[end++]) {}
+        while (end < this.buffer.length && this.buffer[end++]) {}
         this.offset = end;
         const slice = this.buffer.subarray(start, end - 1);
-        return thaiDecoder.decode(slice);
+        return decoder.decode(slice);
       }
       return origCstring.call(this);
     };
@@ -55,18 +113,21 @@ export class PostgresCatalogClient {
     database?: string;
     user?: string;
     password?: string;
+    clientEncoding?: string;
   } {
     if (!str || !str.trim()) return {};
     const trimmed = str.trim();
     if (trimmed.startsWith('postgresql://') || trimmed.startsWith('postgres://')) {
       try {
         const u = new URL(trimmed);
+        const searchEnc = u.searchParams.get('client_encoding') || u.searchParams.get('encoding');
         return {
           host: u.hostname || undefined,
           port: u.port ? parseInt(u.port, 10) : undefined,
           database: u.pathname ? u.pathname.replace(/^\//, '') : undefined,
           user: u.username ? decodeURIComponent(u.username) : undefined,
-          password: u.password ? decodeURIComponent(u.password) : undefined
+          password: u.password ? decodeURIComponent(u.password) : undefined,
+          clientEncoding: searchEnc || undefined
         };
       } catch (_) {
         // ignore
@@ -88,54 +149,141 @@ export class PostgresCatalogClient {
       else if (key === 'dbname' || key === 'database') result.database = val;
       else if (key === 'user' || key === 'username') result.user = val;
       else if (key === 'password') result.password = val;
+      else if (key === 'client_encoding' || key === 'clientencoding' || key === 'encoding') result.clientEncoding = val;
     }
     return result;
   }
 
-  private async configureEncoding(client: Client): Promise<string> {
-    const desired = this.config.clientEncoding?.trim();
+  public async configureEncoding(client: Client): Promise<string> {
+    const rawConnStr = this.config.connectionString?.trim();
+    const parsedConn = rawConnStr ? PostgresCatalogClient.parseConnString(rawConnStr) : {};
+    const explicitConfig = (this.config.clientEncoding && this.config.clientEncoding.toLowerCase() !== 'auto')
+      ? this.config.clientEncoding.trim()
+      : undefined;
+    const desired = explicitConfig || parsedConn.clientEncoding?.trim();
+
+    // 1. Explicit encoding configured by user (e.g. WIN874, TIS620, UTF8, SQL_ASCII, WIN1252)
     if (desired && desired.toLowerCase() !== 'auto') {
       const safeDesired = desired.replace(/[^a-zA-Z0-9_-]/g, '');
       try {
         await client.query(`SET client_encoding = '${safeDesired}';`);
         process.env.PGCLIENTENCODING = safeDesired;
+        console.log(`DuckLake: Configured explicit client_encoding to '${safeDesired}'`);
+
+        // Record server encoding for decoder context (useful for SQL_ASCII)
+        try {
+          const sRes = await client.query('SHOW server_encoding;');
+          process.env.PG_SERVER_ENCODING = String(sRes.rows[0]?.server_encoding || '').trim();
+        } catch (_) {}
+
         return safeDesired;
       } catch (err) {
         console.warn(`DuckLake: Custom client_encoding '${safeDesired}' failed:`, err);
       }
     }
 
-    // Auto strategy: Query the active client encoding directly without forcing transcoding
-    try {
-      const res = await client.query('SHOW client_encoding;');
-      const activeEnc = res.rows[0]?.client_encoding;
-      if (activeEnc) {
-        process.env.PGCLIENTENCODING = String(activeEnc);
-        return String(activeEnc);
-      }
-    } catch (_) {
-      // ignore
-    }
-
+    // 2. Auto-detect strategy:
+    // Query server_encoding directly. In PostgreSQL, server_encoding is the actual encoding
+    // of the database (e.g. WIN874, TIS620, UTF8, SQL_ASCII).
+    let serverEnc = '';
     try {
       const res = await client.query('SHOW server_encoding;');
-      const sEnc = String(res.rows[0]?.server_encoding || 'UTF8');
-      process.env.PGCLIENTENCODING = sEnc;
-      return sEnc;
+      serverEnc = String(res.rows[0]?.server_encoding || '').trim();
     } catch (_) {
-      return process.env.PGCLIENTENCODING || 'UTF8';
+      try {
+        const res = await client.query("SELECT current_setting('server_encoding') as server_encoding;");
+        serverEnc = String(res.rows[0]?.server_encoding || '').trim();
+      } catch {
+        // ignore
+      }
+    }
+
+    if (serverEnc) {
+      const safeServerEnc = serverEnc.replace(/[^a-zA-Z0-9_-]/g, '');
+      process.env.PG_SERVER_ENCODING = safeServerEnc;
+      const sUpper = safeServerEnc.toUpperCase();
+
+      // If server is WIN874, TIS620, WIN1252, or any non-UTF8 database:
+      // Setting client_encoding to match server_encoding eliminates the PostgreSQL
+      // "character with byte sequence ... in encoding WIN874 has no equivalent in encoding UTF8" error,
+      // because PostgreSQL performs ZERO character transcoding when client_encoding == server_encoding.
+      if (sUpper !== 'UTF8' && sUpper !== 'UTF-8' && sUpper !== 'UNICODE') {
+        try {
+          await client.query(`SET client_encoding = '${safeServerEnc}';`);
+          process.env.PGCLIENTENCODING = safeServerEnc;
+          console.log(`DuckLake: Auto-detected server_encoding '${safeServerEnc}'. Client encoding synchronized.`);
+          return safeServerEnc;
+        } catch (err) {
+          console.warn(`DuckLake: Failed to SET client_encoding to '${safeServerEnc}', trying SQL_ASCII fallback:`, err);
+          try {
+            await client.query("SET client_encoding = 'SQL_ASCII';");
+            process.env.PGCLIENTENCODING = 'SQL_ASCII';
+            return 'SQL_ASCII (auto)';
+          } catch (_) {}
+        }
+      } else {
+        // Server is UTF8
+        process.env.PGCLIENTENCODING = 'UTF8';
+        return 'UTF8';
+      }
+    }
+
+    // 3. Fallback: check SHOW client_encoding
+    try {
+      const res = await client.query('SHOW client_encoding;');
+      const activeEnc = String(res.rows[0]?.client_encoding || 'UTF8');
+      process.env.PGCLIENTENCODING = activeEnc;
+      return activeEnc;
+    } catch (_) {
+      process.env.PGCLIENTENCODING = 'UTF8';
+      return 'UTF8';
+    }
+  }
+
+  private async queryWithFallback(client: Client, sql: string): Promise<any> {
+    try {
+      return await client.query(sql);
+    } catch (err: any) {
+      const msg = String(err?.message || err);
+      // Catch PostgreSQL character transcoding errors
+      if (
+        msg.includes('has no equivalent in encoding') ||
+        msg.includes('invalid byte sequence for encoding') ||
+        msg.includes('character with byte sequence')
+      ) {
+        console.warn(`DuckLake: Transcoding error detected: "${msg}". Attempting auto-recovery with client_encoding...`);
+        try {
+          const currentEnc = (process.env.PGCLIENTENCODING || '').toUpperCase();
+          const targetEnc = currentEnc !== 'WIN874' ? 'WIN874' : 'SQL_ASCII';
+          await client.query(`SET client_encoding = '${targetEnc}';`);
+          process.env.PGCLIENTENCODING = targetEnc;
+          if (!process.env.PG_SERVER_ENCODING) {
+            process.env.PG_SERVER_ENCODING = 'WIN874';
+          }
+          console.log(`DuckLake: Retrying query with recovered client_encoding = '${targetEnc}'`);
+          return await client.query(sql);
+        } catch (retryErr) {
+          throw err;
+        }
+      }
+      throw err;
     }
   }
 
   private createClient(): Client {
-    const isCustom = this.config.clientEncoding && this.config.clientEncoding.toLowerCase() !== 'auto';
-    const enc = isCustom ? this.config.clientEncoding! : (process.env.PGCLIENTENCODING || 'UTF8');
-    if (isCustom) {
-      process.env.PGCLIENTENCODING = enc;
-    }
+    const rawConnStr = this.config.connectionString?.trim();
+    const parsedConn = rawConnStr ? PostgresCatalogClient.parseConnString(rawConnStr) : {};
+
+    const explicitConfig = (this.config.clientEncoding && this.config.clientEncoding.toLowerCase() !== 'auto')
+      ? this.config.clientEncoding.trim()
+      : undefined;
+    const effectiveEncoding = explicitConfig || parsedConn.clientEncoding?.trim();
+    const isCustom = !!effectiveEncoding && effectiveEncoding.toLowerCase() !== 'auto';
+    const enc = isCustom ? effectiveEncoding : 'UTF8';
+
+    process.env.PGCLIENTENCODING = enc;
     const clientOptions = isCustom ? `-c client_encoding=${enc}` : undefined;
 
-    const rawConnStr = this.config.connectionString?.trim();
     if (rawConnStr) {
       if (rawConnStr.startsWith('postgresql://') || rawConnStr.startsWith('postgres://')) {
         return new Client({
@@ -146,15 +294,13 @@ export class PostgresCatalogClient {
         });
       }
 
-      // If user provided DuckDB / libpq style connection string e.g. postgres:host=...
-      const parsed = PostgresCatalogClient.parseConnString(rawConnStr);
-      if (parsed.host || parsed.database) {
+      if (parsedConn.host || parsedConn.database) {
         return new Client({
-          host: parsed.host || this.config.host,
-          port: parsed.port || this.config.port,
-          database: parsed.database || this.config.database,
-          user: parsed.user || this.config.user,
-          password: parsed.password || this.config.password,
+          host: parsedConn.host || this.config.host,
+          port: parsedConn.port || this.config.port,
+          database: parsedConn.database || this.config.database,
+          user: parsedConn.user || this.config.user,
+          password: parsedConn.password || this.config.password,
           ssl: this.config.ssl ? { rejectUnauthorized: false } : false,
           connectionTimeoutMillis: 5000,
           options: clientOptions
@@ -188,17 +334,26 @@ export class PostgresCatalogClient {
     try {
       await client.connect();
       const usedEncoding = await this.configureEncoding(client);
-      const res = await client.query('SELECT version();');
+      const res = await this.queryWithFallback(client, 'SELECT version();');
 
       // Check if DuckLake metastore is detected
-      const ducklakeCheck = await client.query("SELECT to_regclass('public.ducklake_table') as has_ducklake;");
-      const hasDuckLake = !!ducklakeCheck.rows[0]?.has_ducklake;
+      let hasDuckLake = false;
+      try {
+        const ducklakeCheck = await this.queryWithFallback(client, "SELECT to_regclass('public.ducklake_table') as has_ducklake;");
+        hasDuckLake = !!ducklakeCheck.rows[0]?.has_ducklake;
+      } catch {
+        // ignore
+      }
 
       let extra = '';
       if (hasDuckLake) {
-        const countRes = await client.query("SELECT COUNT(*) FROM ducklake_table WHERE end_snapshot IS NULL;");
-        const count = countRes.rows[0]?.count ?? 0;
-        extra = ` (DuckLake Metastore detected: ${count} active lakehouse tables)`;
+        try {
+          const countRes = await this.queryWithFallback(client, "SELECT COUNT(*) FROM ducklake_table WHERE end_snapshot IS NULL;");
+          const count = countRes.rows[0]?.count ?? 0;
+          extra = ` (DuckLake Metastore detected: ${count} active lakehouse tables)`;
+        } catch {
+          // ignore
+        }
       }
 
       return {
@@ -229,122 +384,125 @@ export class PostgresCatalogClient {
       const tables: TableMetadata[] = [];
       const tablesMap = new Map<string, TableMetadata>();
 
-      // Check if DuckLake metastore tables exist in PostgreSQL
-      const ducklakeCheck = await client.query("SELECT to_regclass('public.ducklake_table') as has_ducklake;");
-      const hasDuckLake = !!ducklakeCheck.rows[0]?.has_ducklake;
+      // 🦆 1. DUCKLAKE METASTORE PARSING (if exists)
+      try {
+        const ducklakeCheck = await this.queryWithFallback(client, "SELECT to_regclass('public.ducklake_table') as has_ducklake;");
+        const hasDuckLake = !!ducklakeCheck.rows[0]?.has_ducklake;
 
-      if (hasDuckLake) {
-        // 🦆 1. NATIVE DUCKLAKE METASTORE PARSING (TABLES)
-        const tablesQuery = `
-          SELECT 
-            s.schema_name,
-            t.table_name,
-            'DUCKLAKE TABLE' AS table_type,
-            'DuckLake table backed by local or S3 parquet storage' AS table_comment,
-            ts.record_count,
-            ts.file_size_bytes
-          FROM ducklake_table t
-          JOIN ducklake_schema s ON t.schema_id = s.schema_id
-          LEFT JOIN ducklake_table_stats ts ON t.table_id = ts.table_id
-          WHERE t.end_snapshot IS NULL
-          ORDER BY s.schema_name, t.table_name;
-        `;
+        if (hasDuckLake) {
+          const tablesQuery = `
+            SELECT 
+              s.schema_name,
+              t.table_name,
+              'DUCKLAKE TABLE' AS table_type,
+              'DuckLake table backed by local or S3 parquet storage' AS table_comment,
+              ts.record_count,
+              ts.file_size_bytes
+            FROM ducklake_table t
+            JOIN ducklake_schema s ON t.schema_id = s.schema_id
+            LEFT JOIN ducklake_table_stats ts ON t.table_id = ts.table_id
+            WHERE t.end_snapshot IS NULL
+            ORDER BY s.schema_name, t.table_name;
+          `;
 
-        const columnsQuery = `
-          SELECT 
-            s.schema_name,
-            t.table_name,
-            c.column_name,
-            c.column_type AS data_type,
-            c.nulls_allowed AS is_nullable,
-            c.default_value,
-            'DuckLake column' AS column_comment
-          FROM ducklake_column c
-          JOIN ducklake_table t ON c.table_id = t.table_id
-          JOIN ducklake_schema s ON t.schema_id = s.schema_id
-          WHERE t.end_snapshot IS NULL AND c.end_snapshot IS NULL
-          ORDER BY s.schema_name, t.table_name, CAST(COALESCE(c.column_order, 0) AS integer);
-        `;
+          const columnsQuery = `
+            SELECT 
+              s.schema_name,
+              t.table_name,
+              c.column_name,
+              c.column_type AS data_type,
+              c.nulls_allowed AS is_nullable,
+              c.default_value,
+              'DuckLake column' AS column_comment
+            FROM ducklake_column c
+            JOIN ducklake_table t ON c.table_id = t.table_id
+            JOIN ducklake_schema s ON t.schema_id = s.schema_id
+            WHERE t.end_snapshot IS NULL AND c.end_snapshot IS NULL
+            ORDER BY s.schema_name, t.table_name, CAST(COALESCE(c.column_order, 0) AS integer);
+          `;
 
-        const [tablesResult, columnsResult] = await Promise.all([
-          client.query(tablesQuery),
-          client.query(columnsQuery)
-        ]);
+          const [tablesResult, columnsResult] = await Promise.all([
+            this.queryWithFallback(client, tablesQuery),
+            this.queryWithFallback(client, columnsQuery)
+          ]);
 
-        const columnsByTable = new Map<string, ColumnMetadata[]>();
-        for (const row of columnsResult.rows) {
-          const tableKey = `${row.schema_name}.${row.table_name}`;
-          if (!columnsByTable.has(tableKey)) {
-            columnsByTable.set(tableKey, []);
+          const columnsByTable = new Map<string, ColumnMetadata[]>();
+          for (const row of columnsResult.rows) {
+            const tableKey = `${row.schema_name}.${row.table_name}`;
+            if (!columnsByTable.has(tableKey)) {
+              columnsByTable.set(tableKey, []);
+            }
+
+            columnsByTable.get(tableKey)!.push({
+              name: row.column_name,
+              dataType: row.data_type,
+              isNullable: row.is_nullable === true || row.is_nullable === 't',
+              defaultValue: row.default_value ?? undefined,
+              comment: row.column_comment ?? undefined
+            });
           }
 
-          columnsByTable.get(tableKey)!.push({
-            name: row.column_name,
-            dataType: row.data_type,
-            isNullable: row.is_nullable === true || row.is_nullable === 't',
-            defaultValue: row.default_value ?? undefined,
-            comment: row.column_comment ?? undefined
-          });
-        }
+          for (const row of tablesResult.rows) {
+            const tableKey = `${row.schema_name}.${row.table_name}`;
+            const cols = columnsByTable.get(tableKey) || [];
 
-        for (const row of tablesResult.rows) {
-          const tableKey = `${row.schema_name}.${row.table_name}`;
-          const cols = columnsByTable.get(tableKey) || [];
+            const tMeta: TableMetadata = {
+              schema: row.schema_name,
+              name: row.table_name,
+              fullName: tableKey,
+              type: row.table_type,
+              columns: cols,
+              comment: row.table_comment ?? undefined,
+              rowCount: row.record_count != null ? parseInt(row.record_count, 10) : undefined,
+              fileSizeBytes: row.file_size_bytes != null ? parseInt(row.file_size_bytes, 10) : undefined
+            };
+            tablesMap.set(tableKey, tMeta);
+            tables.push(tMeta);
+          }
 
-          const tMeta: TableMetadata = {
-            schema: row.schema_name,
-            name: row.table_name,
-            fullName: tableKey,
-            type: row.table_type,
-            columns: cols,
-            comment: row.table_comment ?? undefined,
-            rowCount: row.record_count != null ? parseInt(row.record_count, 10) : undefined,
-            fileSizeBytes: row.file_size_bytes != null ? parseInt(row.file_size_bytes, 10) : undefined
-          };
-          tablesMap.set(tableKey, tMeta);
-          tables.push(tMeta);
-        }
-
-        // 🦆 1b. DUCKLAKE METASTORE VIEWS (if ducklake_view table exists)
-        try {
-          const viewCheck = await client.query("SELECT to_regclass('public.ducklake_view') as has_view;");
-          if (viewCheck.rows[0]?.has_view) {
-            const viewsQuery = `
-              SELECT 
-                s.schema_name,
-                v.view_name AS table_name,
-                'VIEW' AS table_type,
-                'DuckLake view' AS table_comment,
-                v.sql AS view_definition
-              FROM ducklake_view v
-              JOIN ducklake_schema s ON v.schema_id = s.schema_id
-              WHERE v.end_snapshot IS NULL
-              ORDER BY s.schema_name, v.view_name;
-            `;
-            const viewsResult = await client.query(viewsQuery);
-            for (const row of viewsResult.rows) {
-              const tableKey = `${row.schema_name}.${row.table_name}`;
-              if (!tablesMap.has(tableKey)) {
-                const vMeta: TableMetadata = {
-                  schema: row.schema_name,
-                  name: row.table_name,
-                  fullName: tableKey,
-                  type: 'VIEW',
-                  columns: [],
-                  comment: row.table_comment ?? undefined,
-                  viewDefinition: row.view_definition ?? undefined
-                };
-                tablesMap.set(tableKey, vMeta);
-                tables.push(vMeta);
+          // DuckLake Views
+          try {
+            const viewCheck = await this.queryWithFallback(client, "SELECT to_regclass('public.ducklake_view') as has_view;");
+            if (viewCheck.rows[0]?.has_view) {
+              const viewsQuery = `
+                SELECT 
+                  s.schema_name,
+                  v.view_name AS table_name,
+                  'VIEW' AS table_type,
+                  'DuckLake view' AS table_comment,
+                  v.sql AS view_definition
+                FROM ducklake_view v
+                JOIN ducklake_schema s ON v.schema_id = s.schema_id
+                WHERE v.end_snapshot IS NULL
+                ORDER BY s.schema_name, v.view_name;
+              `;
+              const viewsResult = await this.queryWithFallback(client, viewsQuery);
+              for (const row of viewsResult.rows) {
+                const tableKey = `${row.schema_name}.${row.table_name}`;
+                if (!tablesMap.has(tableKey)) {
+                  const vMeta: TableMetadata = {
+                    schema: row.schema_name,
+                    name: row.table_name,
+                    fullName: tableKey,
+                    type: 'VIEW',
+                    columns: [],
+                    comment: row.table_comment ?? undefined,
+                    viewDefinition: row.view_definition ?? undefined
+                  };
+                  tablesMap.set(tableKey, vMeta);
+                  tables.push(vMeta);
+                }
               }
             }
+          } catch {
+            // ignore if ducklake_view table doesn't exist
           }
-        } catch {
-          // ignore if ducklake_view table doesn't exist
         }
+      } catch (lakeErr) {
+        console.warn('DuckLake metastore query skipped or failed:', lakeErr);
       }
 
-      // 🐘 2. POSTGRESQL TABLES & VIEWS ACROSS ALL SCHEMAS (e.g. public, analytics, staging, etc.)
+      // 🐘 2. POSTGRESQL TABLES & VIEWS ACROSS ALL SCHEMAS
       try {
         const pgTablesQuery = `
           SELECT 
@@ -379,10 +537,46 @@ export class PostgresCatalogClient {
           ORDER BY c.table_schema, c.table_name, c.ordinal_position;
         `;
 
-        const [pgTablesRes, pgColumnsRes] = await Promise.all([
-          client.query(pgTablesQuery),
-          client.query(pgColumnsQuery)
-        ]);
+        let pgTablesRes: any;
+        try {
+          pgTablesRes = await this.queryWithFallback(client, pgTablesQuery);
+        } catch (tErr) {
+          console.warn('DuckLake: pgTablesQuery failed, retrying without obj_description comments:', tErr);
+          const safePgTablesQuery = `
+            SELECT 
+              t.table_schema,
+              t.table_name,
+              t.table_type,
+              NULL as table_comment
+            FROM information_schema.tables t
+            WHERE t.table_schema NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+              AND t.table_name NOT LIKE 'ducklake_%'
+            ORDER BY t.table_schema, t.table_name;
+          `;
+          pgTablesRes = await this.queryWithFallback(client, safePgTablesQuery);
+        }
+
+        let pgColumnsRes: any;
+        try {
+          pgColumnsRes = await this.queryWithFallback(client, pgColumnsQuery);
+        } catch (cErr) {
+          console.warn('DuckLake: pgColumnsQuery failed, retrying without col_description comments:', cErr);
+          const safePgColumnsQuery = `
+            SELECT 
+              c.table_schema,
+              c.table_name,
+              c.column_name,
+              c.data_type,
+              c.is_nullable,
+              c.column_default,
+              NULL as column_comment
+            FROM information_schema.columns c
+            WHERE c.table_schema NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+              AND c.table_name NOT LIKE 'ducklake_%'
+            ORDER BY c.table_schema, c.table_name, c.ordinal_position;
+          `;
+          pgColumnsRes = await this.queryWithFallback(client, safePgColumnsQuery);
+        }
 
         const pgColsByTable = new Map<string, ColumnMetadata[]>();
         for (const row of pgColumnsRes.rows) {

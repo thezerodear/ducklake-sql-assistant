@@ -5,12 +5,18 @@ node_modules/
 dist/
 out/
 *.vsix
+src/catalog/*.js
+src/catalog/*.d.ts
+src/catalog/*.map
 
 # Environment & editor
 .vscode/*
 !.vscode/launch.json
 !.vscode/tasks.json
 .vscode-test/
+.agents/
+.agent/
+.pgdata*
 
 # Database files
 *.duckdb

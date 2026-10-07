@@ -128,7 +128,8 @@ export class DuckLakeConnectionWebview {
       database: 'ducklake_catalog',
       duckdbDatabasePath: '',
       dataPath: '',
-      overrideDataPath: false
+      overrideDataPath: false,
+      clientEncoding: 'auto'
     };
   }
 
@@ -185,6 +186,8 @@ export class DuckLakeConnectionWebview {
       if (!cleaned.startsWith('postgresql://') && !cleaned.startsWith('postgres://')) {
         cleaned = cleaned.replace(/^(?:postgres:)+/i, '').trim();
       }
+      // DuckDB expects UTF-8 internally; strip client_encoding parameter from DuckDB ATTACH string
+      cleaned = cleaned.replace(/\s*client_encoding=[^\s]+/gi, '').replace(/[?&]client_encoding=[^&#\s]*/gi, '').trim();
       attachTarget = `ducklake:postgres:${cleaned}`;
       extensionsLoad = `con.execute("INSTALL ducklake; INSTALL postgres;")\ncon.execute("LOAD ducklake; LOAD postgres;")`;
     }
@@ -290,7 +293,7 @@ con.sql("SHOW TABLES;").show()
       enableSmartHeuristic: true,
       suggestDuckDBFunctions: true,
       alwaysEnableInTripleQuotes: true,
-      clientEncoding: this.schemaManager.readConfig().clientEncoding || 'auto'
+      clientEncoding: (data.clientEncoding && data.clientEncoding.trim()) ? data.clientEncoding.trim() : (this.schemaManager.readConfig().clientEncoding || 'auto')
     };
 
     const client = new PostgresCatalogClient(testConfig);
@@ -323,6 +326,7 @@ con.sql("SHOW TABLES;").show()
       const isLocal = data.catalogType === 'local';
       const current = this.schemaManager.readConfig();
       const connName = data.connectionName?.trim() || 'lake';
+      const clientEncoding = data.clientEncoding?.trim() || current.clientEncoding || 'auto';
 
       let newConfig: PostgresConfig;
 
@@ -334,7 +338,8 @@ con.sql("SHOW TABLES;").show()
           duckdbDatabasePath: data.catalogConnection?.trim() || '',
           databaseAlias: data.databaseAlias?.trim() || 'lake',
           dataPath: data.dataPath?.trim() || '',
-          overrideDataPath: !!data.overrideDataPath
+          overrideDataPath: !!data.overrideDataPath,
+          clientEncoding
         };
       } else {
         const connStr = data.catalogConnection?.trim() || data.connectionString?.trim() || '';
@@ -359,7 +364,8 @@ con.sql("SHOW TABLES;").show()
           ssl: !!data.ssl,
           databaseAlias: data.databaseAlias?.trim() || 'lake',
           dataPath: data.dataPath?.trim() || '',
-          overrideDataPath: !!data.overrideDataPath
+          overrideDataPath: !!data.overrideDataPath,
+          clientEncoding: parsed.clientEncoding || clientEncoding
         };
       }
 
@@ -408,6 +414,9 @@ con.sql("SHOW TABLES;").show()
     const dataPath = config.dataPath || '';
     const overrideDataPath = config.overrideDataPath !== undefined ? config.overrideDataPath : false;
     const databaseAlias = config.databaseAlias || 'lake';
+    const currentEncoding = (config.clientEncoding && config.clientEncoding !== 'auto')
+      ? config.clientEncoding
+      : (PostgresCatalogClient.parseConnString(config.connectionString || '').clientEncoding || config.clientEncoding || 'auto');
     const storagePath = ConfigStorage.getStorageFilePath().replace(/\\/g, '/');
 
     const escapeHtml = (unsafe: any): string => {
@@ -665,8 +674,27 @@ con.sql("SHOW TABLES;").show()
 
     input[type="text"]:focus,
     input[type="number"]:focus,
-    input[type="password"]:focus {
+    input[type="password"]:focus,
+    select.form-select:focus {
       border-color: var(--input-focus);
+    }
+
+    select.form-select {
+      width: 100%;
+      background: var(--input-bg);
+      border: 1px solid var(--input-border);
+      border-radius: 6px;
+      padding: 9px 12px;
+      color: #fff;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.15s ease;
+      cursor: pointer;
+    }
+
+    select.form-select option {
+      background: #1a1c20;
+      color: #fff;
     }
 
     /* Input With Action Button */
@@ -1124,6 +1152,29 @@ con.sql("SHOW TABLES;").show()
         <div class="field-label">Password</div>
         <input type="password" id="advPass" value="${escapeHtml(config.password || '')}" placeholder="••••••••" />
       </div>
+      <div class="field-group">
+        <div class="field-label">
+          Client Encoding / Character Set
+          <span class="info-icon" title="PostgreSQL client character encoding. 'Auto-detect' synchronizes client encoding with server database encoding (e.g. WIN874) to prevent 'character has no equivalent' errors.">ℹ</span>
+        </div>
+        <select id="advEncoding" class="form-select">
+          <option value="auto" ${(!currentEncoding || currentEncoding.toLowerCase() === 'auto') ? 'selected' : ''}>Auto-detect (Server Default / WIN874 / UTF8)</option>
+          <option value="WIN874" ${currentEncoding?.toUpperCase() === 'WIN874' ? 'selected' : ''}>WIN874 (Thai Windows CP874)</option>
+          <option value="TIS620" ${currentEncoding?.toUpperCase() === 'TIS620' ? 'selected' : ''}>TIS620 (Thai TIS-620)</option>
+          <option value="UTF8" ${currentEncoding?.toUpperCase() === 'UTF8' ? 'selected' : ''}>UTF8 (Unicode UTF-8)</option>
+          <option value="WIN1252" ${currentEncoding?.toUpperCase() === 'WIN1252' ? 'selected' : ''}>WIN1252 (Western European CP1252)</option>
+          <option value="LATIN1" ${currentEncoding?.toUpperCase() === 'LATIN1' ? 'selected' : ''}>LATIN1 (Western European ISO-8859-1)</option>
+          <option value="SQL_ASCII" ${currentEncoding?.toUpperCase() === 'SQL_ASCII' ? 'selected' : ''}>SQL_ASCII (Raw bytes / Disable transcoding)</option>
+          <option value="WIN1251" ${currentEncoding?.toUpperCase() === 'WIN1251' ? 'selected' : ''}>WIN1251 (Cyrillic CP1251)</option>
+          <option value="GBK" ${currentEncoding?.toUpperCase() === 'GBK' ? 'selected' : ''}>GBK (Simplified Chinese)</option>
+          <option value="GB18030" ${currentEncoding?.toUpperCase() === 'GB18030' ? 'selected' : ''}>GB18030 (Chinese GB18030)</option>
+          <option value="BIG5" ${currentEncoding?.toUpperCase() === 'BIG5' ? 'selected' : ''}>BIG5 (Traditional Chinese)</option>
+          <option value="SJIS" ${currentEncoding?.toUpperCase() === 'SJIS' ? 'selected' : ''}>SJIS (Japanese Shift-JIS)</option>
+          <option value="EUC_JP" ${currentEncoding?.toUpperCase() === 'EUC_JP' ? 'selected' : ''}>EUC_JP (Japanese EUC)</option>
+          <option value="EUC_KR" ${currentEncoding?.toUpperCase() === 'EUC_KR' ? 'selected' : ''}>EUC_KR (Korean EUC)</option>
+        </select>
+        <div class="sub-hint">Auto-detect inspects server encoding and automatically adapts client encoding to prevent transcoding errors.</div>
+      </div>
     </div>
 
     <!-- Test Feedback Banner -->
@@ -1195,6 +1246,7 @@ con.sql("SHOW TABLES;").show()
     const advDb = document.getElementById('advDb');
     const advUser = document.getElementById('advUser');
     const advPass = document.getElementById('advPass');
+    const advEncoding = document.getElementById('advEncoding');
 
     // Title update on connection name change
     connNameInput.addEventListener('input', () => {
@@ -1271,6 +1323,11 @@ con.sql("SHOW TABLES;").show()
           if (u.pathname) advDb.value = u.pathname.replace(/^\\//, '');
           if (u.username) advUser.value = decodeURIComponent(u.username);
           if (u.password) advPass.value = decodeURIComponent(u.password);
+          const encParam = u.searchParams.get('client_encoding') || u.searchParams.get('encoding');
+          if (encParam && advEncoding) {
+            const matchVal = Array.from(advEncoding.options).find(o => o.value.toUpperCase() === encParam.toUpperCase());
+            if (matchVal) advEncoding.value = matchVal.value;
+          }
           return;
         } catch (_) {}
       }
@@ -1286,6 +1343,10 @@ con.sql("SHOW TABLES;").show()
         else if (k === 'dbname' || k === 'database') advDb.value = v;
         else if (k === 'user' || k === 'username') advUser.value = v;
         else if (k === 'password') advPass.value = v;
+        else if ((k === 'client_encoding' || k === 'clientencoding' || k === 'encoding') && advEncoding) {
+          const matchVal = Array.from(advEncoding.options).find(o => o.value.toUpperCase() === v.toUpperCase());
+          if (matchVal) advEncoding.value = matchVal.value;
+        }
       }
     }
 
@@ -1297,12 +1358,16 @@ con.sql("SHOW TABLES;").show()
       const db = advDb.value.trim() || 'ducklake_catalog';
       const u = advUser.value.trim() || 'postgres';
       const pass = advPass.value;
-      catalogConnInput.value = 'postgres:host=' + h + ' port=' + p + ' dbname=' + db + ' user=' + u + ' password=' + pass;
+      const enc = advEncoding && advEncoding.value !== 'auto' ? (' client_encoding=' + advEncoding.value) : '';
+      catalogConnInput.value = 'postgres:host=' + h + ' port=' + p + ' dbname=' + db + ' user=' + u + ' password=' + pass + enc;
     }
 
     [advHost, advPort, advDb, advUser, advPass].forEach(input => {
       input.addEventListener('input', syncFromAdvanced);
     });
+    if (advEncoding) {
+      advEncoding.addEventListener('change', syncFromAdvanced);
+    }
 
     catalogConnInput.addEventListener('change', () => {
       syncToAdvanced(catalogConnInput.value.trim());
@@ -1320,6 +1385,7 @@ con.sql("SHOW TABLES;").show()
         dataPath: dataPathInput.value.trim(),
         overrideDataPath: overrideSwitch.checked,
         databaseAlias: dbAliasInput.value.trim() || 'lake',
+        clientEncoding: advEncoding ? advEncoding.value : 'auto',
         host: advHost.value.trim(),
         port: advPort.value.trim(),
         database: advDb.value.trim(),

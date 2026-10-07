@@ -125,6 +125,8 @@ export function activate(context: vscode.ExtensionContext) {
       if (!cleaned.startsWith('postgresql://') && !cleaned.startsWith('postgres://')) {
         cleaned = cleaned.replace(/^(?:postgres:)+/i, '').trim();
       }
+      // DuckDB expects UTF-8 internally; strip client_encoding parameter from DuckDB ATTACH string
+      cleaned = cleaned.replace(/\s*client_encoding=[^\s]+/gi, '').replace(/[?&]client_encoding=[^&#\s]*/gi, '').trim();
       attachTarget = `ducklake:postgres:${cleaned}`;
       extensionsLoad = `con.execute("INSTALL ducklake; INSTALL postgres;")\ncon.execute("LOAD ducklake; LOAD postgres;")`;
     }
