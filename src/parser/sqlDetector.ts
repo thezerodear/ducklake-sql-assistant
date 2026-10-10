@@ -95,130 +95,133 @@ export class SqlDetector {
     text: string,
     offset: number
   ): { start: number; end: number; quoteType: string; prefixBeforeQuote: string } | null {
-    // Scan quotes around offset
-    // Triple quotes take priority
-    const tripleQuotePatterns = ['"""', "'''"];
-    for (const tq of tripleQuotePatterns) {
-      const match = this.matchQuotePair(text, offset, tq);
-      if (match) {
-        return match;
-      }
-    }
-
-    // Single quotes
-    const singleQuotePatterns = ['"', "'"];
-    for (const sq of singleQuotePatterns) {
-      const match = this.matchQuotePair(text, offset, sq);
-      if (match) {
-        return match;
-      }
-    }
-
-    return null;
-  }
-
-  private static matchQuotePair(
-    text: string,
-    offset: number,
-    quote: string
-  ): { start: number; end: number; quoteType: string; prefixBeforeQuote: string } | null {
-    const qLen = quote.length;
-
-    // Search backwards for opening quote starting before cursor
-    let openPos = -1;
-    let searchPos = offset - 1;
-
-    while (searchPos >= 0) {
-      const idx = text.lastIndexOf(quote, searchPos);
-      if (idx === -1) {
-        break;
-      }
-
-      // Check for escape character `\`
-      let backslashCount = 0;
-      let p = idx - 1;
-      while (p >= 0 && text[p] === '\\') {
-        backslashCount++;
-        p--;
-      }
-
-      if (backslashCount % 2 === 0) {
-        // Not escaped
-        // Also ensure not part of a longer quote if checking single quote
-        if (qLen === 1) {
-          const isPartOfTriple =
-            (idx >= 2 && text.slice(idx - 2, idx + 1) === quote.repeat(3)) ||
-            (idx >= 1 && idx + 1 < text.length && text.slice(idx - 1, idx + 2) === quote.repeat(3)) ||
-            (idx + 2 < text.length && text.slice(idx, idx + 3) === quote.repeat(3));
-          if (isPartOfTriple) {
-            searchPos = idx - 1;
-            continue;
-          }
-        }
-
-        openPos = idx;
-        break;
-      }
-      searchPos = idx - 1;
-    }
-
-    if (openPos === -1) {
+    if (offset < 0 || offset > text.length) {
       return null;
     }
 
-    // Now find matching closing quote after openPos + qLen
-    const startOfContent = openPos + qLen;
-    if (offset < startOfContent) {
-      return null;
-    }
+    const n = text.length;
+    let pos = 0;
 
-    let closePos = -1;
-    let cSearchPos = startOfContent;
+    while (pos < n) {
+      const ch = text[pos];
 
-    while (cSearchPos < text.length) {
-      const idx = text.indexOf(quote, cSearchPos);
-      if (idx === -1) {
-        break;
+      // Skip Python comments (# ...)
+      if (ch === '#') {
+        pos++;
+        while (pos < n && text[pos] !== '\n') {
+          pos++;
+        }
+        if (pos < n && text[pos] === '\n') {
+          pos++;
+        }
+        continue;
       }
 
-      let backslashCount = 0;
-      let p = idx - 1;
-      while (p >= 0 && text[p] === '\\') {
-        backslashCount++;
-        p--;
-      }
+      // Check for triple quotes (""" or ''')
+      if (
+        (ch === '"' || ch === "'") &&
+        pos + 2 < n &&
+        text[pos + 1] === ch &&
+        text[pos + 2] === ch
+      ) {
+        const quote = text.slice(pos, pos + 3);
+        const openPos = pos;
+        pos += 3;
+        const contentStart = pos;
+        let closePos = -1;
 
-      if (backslashCount % 2 === 0) {
-        if (qLen === 1) {
-          const isPartOfTriple =
-            (idx >= 2 && text.slice(idx - 2, idx + 1) === quote.repeat(3)) ||
-            (idx >= 1 && idx + 1 < text.length && text.slice(idx - 1, idx + 2) === quote.repeat(3)) ||
-            (idx + 2 < text.length && text.slice(idx, idx + 3) === quote.repeat(3));
-          if (isPartOfTriple) {
-            cSearchPos = idx + 1;
+        while (pos < n) {
+          if (text[pos] === '\\') {
+            if (pos + 2 < n && text[pos + 1] === '\r' && text[pos + 2] === '\n') {
+              pos += 3;
+            } else {
+              pos += 2;
+            }
             continue;
           }
+          if (
+            text[pos] === ch &&
+            pos + 2 < n &&
+            text[pos + 1] === ch &&
+            text[pos + 2] === ch
+          ) {
+            closePos = pos;
+            pos += 3;
+            break;
+          }
+          pos++;
         }
 
-        closePos = idx;
-        break;
+        const contentEnd = closePos !== -1 ? closePos : n;
+
+        if (offset >= contentStart && offset <= contentEnd) {
+          const searchStart = Math.max(0, openPos - 300);
+          const prefixBeforeQuote = text.slice(searchStart, openPos);
+          return {
+            start: contentStart,
+            end: contentEnd,
+            quoteType: quote,
+            prefixBeforeQuote
+          };
+        }
+
+        if (openPos > offset) {
+          return null;
+        }
+
+        continue;
       }
-      cSearchPos = idx + 1;
-    }
 
-    const end = closePos !== -1 ? closePos : text.length;
+      // Check for single quotes (" or ')
+      if (ch === '"' || ch === "'") {
+        const quote = ch;
+        const openPos = pos;
+        pos++;
+        const contentStart = pos;
+        let closePos = -1;
 
-    // Check prefix up to 300 characters before openPos
-    const searchStart = Math.max(0, openPos - 300);
-    const prefixBeforeQuote = text.slice(searchStart, openPos);
+        while (pos < n) {
+          if (text[pos] === '\\') {
+            if (pos + 2 < n && text[pos + 1] === '\r' && text[pos + 2] === '\n') {
+              pos += 3;
+            } else {
+              pos += 2;
+            }
+            continue;
+          }
+          if (text[pos] === quote) {
+            closePos = pos;
+            pos++;
+            break;
+          }
+          if (text[pos] === '\n') {
+            closePos = pos;
+            break;
+          }
+          pos++;
+        }
 
-    if (offset >= startOfContent && offset <= end) {
-      return {
-        start: startOfContent,
-        end,
-        quoteType: quote,
-        prefixBeforeQuote
-      };
+        const contentEnd = closePos !== -1 ? closePos : n;
+
+        if (offset >= contentStart && offset <= contentEnd) {
+          const searchStart = Math.max(0, openPos - 300);
+          const prefixBeforeQuote = text.slice(searchStart, openPos);
+          return {
+            start: contentStart,
+            end: contentEnd,
+            quoteType: quote,
+            prefixBeforeQuote
+          };
+        }
+
+        if (openPos > offset) {
+          return null;
+        }
+
+        continue;
+      }
+
+      pos++;
     }
 
     return null;

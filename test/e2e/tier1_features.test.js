@@ -6,6 +6,7 @@ const assert = require('node:assert');
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
+const os = require('os');
 const { spawnSync } = require('child_process');
 const { Client } = require('pg');
 

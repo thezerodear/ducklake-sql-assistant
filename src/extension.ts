@@ -9,6 +9,17 @@ import { DuckLakeTreeDataProvider, CatalogTreeItem } from './ui/treeDataProvider
 import { DuckLakeConnectionWebview } from './ui/connectionWebview';
 import { ConfigStorage } from './catalog/configStorage';
 import { execFile } from 'child_process';
+import { toggleCommentCommand } from './commands/commentCommand';
+
+// Registered completion trigger characters: delimiters and alphanumeric typing (excluding newline and space)
+export const TRIGGER_CHARACTERS = [
+  '.', ',', '(', '"', "'", '`', '_',
+  'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
+  'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
+  'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
+  'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
+  '0', '1', '2', '3', '4', '5', '6', '7', '8', '9'
+];
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('DuckLake SQL Assistant is activating...');
@@ -34,20 +45,11 @@ export function activate(context: vscode.ExtensionContext) {
     { scheme: 'untitled', language: 'python' }
   ];
 
-  // Comprehensive trigger characters so suggestions appear on every letter typed
-  const triggerCharacters = [
-    '.', ' ', ',', '(', '\n', '"', "'", '`', '_',
-    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
-    'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
-    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
-    'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'
-  ];
-
   // Register Autocomplete Provider
   const completionProvider = vscode.languages.registerCompletionItemProvider(
     pythonSelectors,
     new DuckLakeCompletionProvider(schemaManager),
-    ...triggerCharacters
+    ...TRIGGER_CHARACTERS
   );
 
   // Register Hover Provider for Table & Column Schema inspection
@@ -247,7 +249,20 @@ con.sql("SHOW TABLES;").show()
 
   // Watch for configuration changes
   const configWatcher = vscode.workspace.onDidChangeConfiguration(async (e) => {
-    if (e.affectsConfiguration('ducklake')) {
+    if (e.affectsConfiguration('ducklake.autocomplete.acceptSuggestionOnEnter')) {
+      const config = vscode.workspace.getConfiguration('ducklake');
+      const val = config.get<string>('autocomplete.acceptSuggestionOnEnter');
+      if (val) {
+        try {
+          const pyConfig = vscode.workspace.getConfiguration('[python]');
+          if (pyConfig.get('editor.acceptSuggestionOnEnter') !== val) {
+            await pyConfig.update('editor.acceptSuggestionOnEnter', val, vscode.ConfigurationTarget.Global);
+          }
+        } catch {
+          // Ignore cleanly if unable to update global configuration
+        }
+      }
+    } else if (e.affectsConfiguration('ducklake')) {
       await schemaManager.refreshCatalog(true);
       treeDataProvider.refresh();
     }
@@ -345,12 +360,20 @@ con.sql("SHOW TABLES;").show()
     }
   );
 
+  const toggleCommentCommandRegistration = vscode.commands.registerCommand(
+    'ducklake.toggleComment',
+    async (editor?: vscode.TextEditor) => {
+      return await toggleCommentCommand(editor);
+    }
+  );
+
   context.subscriptions.push(
     schemaManager,
     statusBar,
     treeView,
     completionProvider,
     hoverProvider,
+    toggleCommentCommandRegistration,
     refreshCommand,
     testConnectionCommand,
     openSettingsCommand,

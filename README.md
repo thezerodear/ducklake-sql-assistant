@@ -13,8 +13,13 @@ A high-performance VS Code extension designed specifically for **DuckLake / Duck
     - Magic comments: `"""--sql ..."""` or `"""/*sql*/ ..."""`.
     - Smart Heuristic: Any triple quote starting with SQL verbs (`SELECT`, `WITH`, `INSERT`, `CREATE`, etc.).
   - **Full Jupyter Notebook Support**: Works seamlessly inside `.ipynb` code cells (`vscode-notebook-cell`) as well as `.py` files.
-
-- **⚡ Schema-Aware Autocomplete & Suggestions**:
+- **⌨️ Context-Aware SQL Line Commenting (`Ctrl+/` / `Cmd+/`)**:
+  - Automatically toggles SQL comments (`-- `) when your cursor or selection is inside detected SQL blocks in Python or Jupyter notebook cells.
+  - Transparently falls back to VS Code's standard Python comment (`#`) outside SQL strings.
+- **⚡ Non-Intrusive & Schema-Aware Autocomplete**:
+  - **No Aggressive Autocomplete Traps on Enter**: Trigger characters exclude `\n` and space; blank or whitespace lines never generate unwanted suggestion popups.
+  - **Tab to Accept Suggestions**: Configured to accept suggestions via Tab without Enter hijacking line breaks.
+  - **Concise Window & Analytical Functions**: Streamlined DuckDB analytical functions (`row_number()`, `dense_rank()`, `rank()`, `lag(col)`) without forced verbose `OVER (...)` templates, while keeping standard SQL keywords (`OVER`, `PARTITION BY`, `WINDOW`, `QUALIFY`) available.
   - **Tables & Views**: Suggests tables from your PostgreSQL DuckLake catalog when typing after `FROM`, `JOIN`, `INTO`, etc.
   - **Columns & Data Types**:
     - Dot completion: Typing `u.` or `lake_users.` suggests only columns belonging to that table or alias!
@@ -81,6 +86,7 @@ You can still customize general extension behavior in VS Code `settings.json`:
 | `ducklake.autoRefreshMinutes` | number | `10` | Auto-refresh interval in minutes (0 to disable). |
 | `ducklake.enableSmartHeuristic` | boolean | `true` | Detect SQL inside triple quotes automatically. |
 | `ducklake.suggestDuckDBFunctions` | boolean | `true` | Suggest DuckDB window, list, and lakehouse analytical functions. |
+| `ducklake.autocomplete.acceptSuggestionOnEnter` | string | `"off"` | Suggestion acceptance behavior on Enter (`"off"` allows Tab to accept suggestions without hijacking newlines). |
 
 ---
 

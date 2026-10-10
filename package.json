@@ -2,7 +2,7 @@
   "name": "ducklake-sql-assistant",
   "displayName": "DuckLake SQL Assistant",
   "description": "SQL Syntax Highlighting, Smart Autocomplete, Sidebar Catalog Explorer, and Postgres/DuckDB Catalog Autosuggestion inside Python & Jupyter Notebook triple quotes for DuckLake / DuckDB.",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "author": "takdanai.mp",
   "publisher": "takdanai-mp",
   "license": "MIT",
@@ -143,6 +143,11 @@
         "title": "Delete Connection",
         "category": "DuckLake",
         "icon": "$(trash)"
+      },
+      {
+        "command": "ducklake.toggleComment",
+        "title": "DuckLake: Toggle SQL / Python Line Comment",
+        "category": "DuckLake"
       }
     ],
     "menus": {
@@ -225,18 +230,38 @@
         ]
       }
     ],
+    "keybindings": [
+      {
+        "command": "ducklake.toggleComment",
+        "key": "ctrl+/",
+        "mac": "cmd+/",
+        "when": "editorTextFocus && !editorReadonly && (editorLangId == python || notebookEditorFocused)"
+      }
+    ],
     "configurationDefaults": {
       "[python]": {
         "editor.quickSuggestions": {
           "other": "on",
           "comments": "off",
           "strings": "on"
-        }
+        },
+        "editor.acceptSuggestionOnEnter": "off"
       }
     },
     "configuration": {
       "title": "DuckLake SQL Assistant",
       "properties": {
+        "ducklake.autocomplete.acceptSuggestionOnEnter": {
+          "type": "string",
+          "enum": [
+            "off",
+            "on",
+            "smart"
+          ],
+          "default": "off",
+          "scope": "resource",
+          "description": "Suggestion acceptance behavior on Enter inside Python/SQL blocks: 'off' allows accepting suggestions via Tab rather than Enter capturing line breaks."
+        },
         "ducklake.duckdb.databasePath": {
           "type": "string",
           "default": "",
@@ -378,7 +403,8 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "watch": "tsc -watch -p ./",
+    "test": "node --test test/qol_improvements.test.js"
   },
   "dependencies": {
     "pg": "^8.12.0"

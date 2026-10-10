@@ -74,10 +74,117 @@ const defaultConfig = {
 
 let currentConfig = { ...defaultConfig };
 
+class Position {
+  constructor(line, character) {
+    this.line = line;
+    this.character = character;
+  }
+}
+
+class Range {
+  constructor(startOrStartLine, endOrStartChar, endLine, endChar) {
+    if (typeof startOrStartLine === 'number') {
+      this.start = new Position(startOrStartLine, endOrStartChar);
+      this.end = new Position(endLine, endChar);
+    } else {
+      this.start = startOrStartLine;
+      this.end = endOrStartChar;
+    }
+  }
+}
+
+class Selection extends Range {
+  constructor(anchor, active) {
+    super(anchor, active);
+    this.anchor = anchor;
+    this.active = active;
+  }
+}
+
+class SnippetString {
+  constructor(value = '') {
+    this.value = value;
+  }
+}
+
+class MarkdownString {
+  constructor(value = '') {
+    this.value = value;
+  }
+  appendMarkdown(str) {
+    this.value += str;
+    return this;
+  }
+}
+
+class CompletionItem {
+  constructor(label, kind) {
+    this.label = label;
+    this.kind = kind;
+  }
+}
+
+const CompletionItemKind = {
+  Text: 1,
+  Method: 2,
+  Function: 3,
+  Constructor: 4,
+  Field: 5,
+  Variable: 6,
+  Class: 7,
+  Interface: 8,
+  Module: 9,
+  Property: 10,
+  Unit: 11,
+  Value: 12,
+  Enum: 13,
+  Keyword: 14,
+  Snippet: 15,
+  Color: 16,
+  File: 17,
+  Reference: 18,
+  Folder: 19,
+  EnumMember: 20,
+  Constant: 21,
+  Struct: 22,
+  Event: 23,
+  Operator: 24,
+  TypeParameter: 25
+};
+
+class TreeItem {
+  constructor(label, collapsibleState) {
+    this.label = label;
+    this.collapsibleState = collapsibleState;
+  }
+}
+
+const TreeItemCollapsibleState = {
+  None: 0,
+  Collapsed: 1,
+  Expanded: 2
+};
+
+class ThemeIcon {
+  constructor(id) {
+    this.id = id;
+  }
+}
+
 const mockVscode = {
   Disposable,
   EventEmitter,
   RelativePattern,
+  Position,
+  Range,
+  Selection,
+  SnippetString,
+  MarkdownString,
+  CompletionItem,
+  CompletionItemKind,
+  TreeItem,
+  TreeItemCollapsibleState,
+  ThemeIcon,
   Uri: {
     file: (fsPath) => ({ fsPath, scheme: 'file', toString: () => `file://${fsPath}` }),
     parse: (uriStr) => ({ fsPath: uriStr.replace(/^file:\/\//, ''), scheme: 'file', toString: () => uriStr })
@@ -121,7 +228,12 @@ const mockVscode = {
     }
   },
   commands: {
-    registerCommand: (cmd, callback) => new Disposable(() => {})
+    registerCommand: (cmd, callback) => new Disposable(() => {}),
+    executeCommand: async (cmd, ...args) => undefined
+  },
+  languages: {
+    registerCompletionItemProvider: () => new Disposable(() => {}),
+    registerHoverProvider: () => new Disposable(() => {})
   }
 };
 

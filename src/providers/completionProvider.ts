@@ -24,6 +24,13 @@ export class DuckLakeCompletionProvider implements vscode.CompletionItemProvider
       return undefined;
     }
 
+    // Do not generate completions on blank lines or lines containing only whitespace up to the cursor
+    const lineText = document.lineAt(position.line).text;
+    const linePrefix = lineText.substring(0, position.character);
+    if (linePrefix.trim().length === 0) {
+      return undefined;
+    }
+
     const analysis = SqlContextAnalyzer.analyze(sqlDetection.sqlPrefix, sqlDetection.fullSql);
     const items: vscode.CompletionItem[] = [];
     const wordRange = document.getWordRangeAtPosition(position, /[a-zA-Z0-9_\u0E00-\u0E7F]+/);
@@ -204,7 +211,7 @@ export class DuckLakeCompletionProvider implements vscode.CompletionItemProvider
     return item;
   }
 
-  private getSqlKeywords(sortPrefix: string, range?: vscode.Range): vscode.CompletionItem[] {
+  public getSqlKeywords(sortPrefix: string, range?: vscode.Range): vscode.CompletionItem[] {
     const keywords = [
       'SELECT', 'FROM', 'WHERE', 'JOIN', 'LEFT JOIN', 'RIGHT JOIN', 'INNER JOIN',
       'FULL JOIN', 'CROSS JOIN', 'ASOF JOIN', 'POSITIONAL JOIN', 'ON', 'AS',
@@ -226,7 +233,7 @@ export class DuckLakeCompletionProvider implements vscode.CompletionItemProvider
     });
   }
 
-  private getDuckDBTableFunctions(sortPrefix: string, range?: vscode.Range): vscode.CompletionItem[] {
+  public getDuckDBTableFunctions(sortPrefix: string, range?: vscode.Range): vscode.CompletionItem[] {
     const functions = [
       {
         name: 'read_parquet',
@@ -273,7 +280,7 @@ export class DuckLakeCompletionProvider implements vscode.CompletionItemProvider
     });
   }
 
-  private getDuckDBColumnFunctions(sortPrefix: string, range?: vscode.Range): vscode.CompletionItem[] {
+  public getDuckDBColumnFunctions(sortPrefix: string, range?: vscode.Range): vscode.CompletionItem[] {
     const functions = [
       {
         name: 'COLUMNS(*)',
@@ -320,73 +327,67 @@ export class DuckLakeCompletionProvider implements vscode.CompletionItemProvider
       // ─── DuckDB Window & Analytical Functions ─────────────────────────
       {
         name: 'row_number()',
-        snippet: 'row_number() OVER (${1:PARTITION BY ${2:col} ORDER BY ${3:col}})',
+        snippet: 'row_number()',
         detail: 'DuckDB Window: Row Number',
         doc: 'Assigns a unique, sequential integer to each row within a window partition, starting at 1.'
       },
       {
-        name: 'row_number() OVER ()',
-        snippet: 'row_number() OVER ()',
-        detail: 'DuckDB Window: Row Number (Entire Result Set)',
-        doc: 'Enumerates all rows sequentially starting at 1 across the entire result set without partitioning.'
-      },
-      {
         name: 'rank()',
-        snippet: 'rank() OVER (${1:PARTITION BY ${2:col} ORDER BY ${3:col}})',
+        snippet: 'rank()',
         detail: 'DuckDB Window: Rank with Gaps',
         doc: 'Returns the rank of the current row with gaps; ties share the same rank, leaving gaps in subsequent ranks.'
       },
       {
         name: 'dense_rank()',
-        snippet: 'dense_rank() OVER (${1:PARTITION BY ${2:col} ORDER BY ${3:col}})',
+        snippet: 'dense_rank()',
         detail: 'DuckDB Window: Dense Rank (No Gaps)',
         doc: 'Returns the rank of the current row without gaps; consecutive groups always receive consecutive rank numbers.'
       },
       {
         name: 'percent_rank()',
-        snippet: 'percent_rank() OVER (${1:PARTITION BY ${2:col} ORDER BY ${3:col}})',
+        snippet: 'percent_rank()',
         detail: 'DuckDB Window: Relative Rank Percentile',
         doc: 'Calculates the relative rank of the current row: (rank() - 1) / (total partition rows - 1).'
       },
       {
         name: 'cume_dist()',
-        snippet: 'cume_dist() OVER (${1:PARTITION BY ${2:col} ORDER BY ${3:col}})',
+        snippet: 'cume_dist()',
         detail: 'DuckDB Window: Cumulative Distribution',
         doc: 'Calculates the cumulative distribution of a value within a window partition.'
       },
       {
         name: 'ntile()',
-        snippet: 'ntile(${1:4}) OVER (${2:PARTITION BY ${3:col} ORDER BY ${4:col}})',
+        snippet: 'ntile(${1:num_buckets})',
         detail: 'DuckDB Window: Ntile Buckets',
         doc: 'Divides rows in partition into num_buckets as equally as possible and returns bucket number from 1 to num_buckets.'
       },
       {
         name: 'lag()',
-        snippet: 'lag(${1:column}, ${2:1}) OVER (${3:PARTITION BY ${4:col} ORDER BY ${5:col}})',
+        snippet: 'lag(${1:col})',
         detail: 'DuckDB Window: Lag Previous Row',
         doc: 'Accesses data from a preceding row at a specified offset without needing a self-join.'
       },
       {
         name: 'lead()',
-        snippet: 'lead(${1:column}, ${2:1}) OVER (${3:PARTITION BY ${4:col} ORDER BY ${5:col}})',
+        snippet: 'lead(${1:col})',
         detail: 'DuckDB Window: Lead Subsequent Row',
         doc: 'Accesses data from a following row at a specified offset without needing a self-join.'
       },
       {
         name: 'first_value()',
-        snippet: 'first_value(${1:column}) OVER (${2:PARTITION BY ${3:col} ORDER BY ${4:col}})',
+        snippet: 'first_value(${1:col})',
         detail: 'DuckDB Window: First Value in Frame',
         doc: 'Returns the value evaluated at the first row of the window frame.'
       },
       {
         name: 'last_value()',
-        snippet: 'last_value(${1:column}) OVER (${2:PARTITION BY ${3:col} ORDER BY ${4:col}} ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)',
+        snippet: 'last_value(${1:col})',
         detail: 'DuckDB Window: Last Value in Frame',
         doc: 'Returns the value evaluated at the last row of the window frame.'
       },
       {
         name: 'nth_value()',
-        snippet: 'nth_value(${1:column}, ${2:1}) OVER (${3:PARTITION BY ${4:col} ORDER BY ${5:col}})',
+        snippet: 'nth_value(${1:col}, ${2:1})',
         detail: 'DuckDB Window: Nth Value in Frame',
         doc: 'Returns the value evaluated at the nth row of the window frame (1-based index).'
       },
