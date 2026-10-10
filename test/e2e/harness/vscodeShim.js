@@ -69,7 +69,11 @@ const defaultConfig = {
   'dataStorage': 'local',
   'dataPath': '',
   'overrideDataPath': false,
-  'databaseAlias': 'lake'
+  'databaseAlias': 'lake',
+  'ducklake.diagnostics.enable': true,
+  'ducklake.diagnostics.checkSchema': true,
+  'diagnostics.enable': true,
+  'diagnostics.checkSchema': true
 };
 
 let currentConfig = { ...defaultConfig };
@@ -171,6 +175,93 @@ class ThemeIcon {
   }
 }
 
+const DiagnosticSeverity = {
+  Error: 0,
+  Warning: 1,
+  Information: 2,
+  Hint: 3
+};
+
+class Diagnostic {
+  constructor(range, message, severity = DiagnosticSeverity.Error) {
+    this.range = range;
+    this.message = message;
+    this.severity = severity;
+    this.source = 'DuckLake SQL';
+    this.code = undefined;
+    this.relatedInformation = [];
+    this.tags = [];
+  }
+}
+
+class DiagnosticCollection {
+  constructor(name = '') {
+    this.name = name;
+    this._diagnostics = new Map();
+    this.isDisposed = false;
+  }
+
+  set(uriOrEntries, diagnostics) {
+    if (this.isDisposed) return;
+    if (Array.isArray(uriOrEntries)) {
+      for (const [uri, diags] of uriOrEntries) {
+        this.set(uri, diags);
+      }
+      return;
+    }
+    const uriKey = uriOrEntries ? (typeof uriOrEntries === 'string' ? uriOrEntries : (uriOrEntries.toString ? uriOrEntries.toString() : String(uriOrEntries))) : '';
+    if (!diagnostics || diagnostics.length === 0) {
+      this._diagnostics.delete(uriKey);
+    } else {
+      this._diagnostics.set(uriKey, [...diagnostics]);
+    }
+  }
+
+  delete(uri) {
+    if (this.isDisposed) return;
+    const uriKey = uri ? (typeof uri === 'string' ? uri : (uri.toString ? uri.toString() : String(uri))) : '';
+    this._diagnostics.delete(uriKey);
+  }
+
+  clear() {
+    if (this.isDisposed) return;
+    this._diagnostics.clear();
+  }
+
+  get(uri) {
+    const uriKey = uri ? (typeof uri === 'string' ? uri : (uri.toString ? uri.toString() : String(uri))) : '';
+    return this._diagnostics.get(uriKey) || [];
+  }
+
+  has(uri) {
+    const uriKey = uri ? (typeof uri === 'string' ? uri : (uri.toString ? uri.toString() : String(uri))) : '';
+    const diags = this._diagnostics.get(uriKey);
+    return !!(diags && diags.length > 0);
+  }
+
+  forEach(callback, thisArg) {
+    for (const [uriStr, diags] of this._diagnostics.entries()) {
+      callback.call(thisArg, mockVscode.Uri.parse(uriStr), diags, this);
+    }
+  }
+
+  dispose() {
+    this.clear();
+    this.isDisposed = true;
+    if (mockVscode.languages._diagnosticCollections) {
+      mockVscode.languages._diagnosticCollections.delete(this.name);
+    }
+  }
+}
+
+const onDidChangeTextDocumentEmitter = new EventEmitter();
+const onDidOpenTextDocumentEmitter = new EventEmitter();
+const onDidSaveTextDocumentEmitter = new EventEmitter();
+const onDidCloseTextDocumentEmitter = new EventEmitter();
+const onDidChangeConfigurationEmitter = new EventEmitter();
+
+const diagnosticCollections = new Map();
+
 const mockVscode = {
   Disposable,
   EventEmitter,
@@ -185,9 +276,21 @@ const mockVscode = {
   TreeItem,
   TreeItemCollapsibleState,
   ThemeIcon,
+  Diagnostic,
+  DiagnosticSeverity,
+  DiagnosticCollection,
   Uri: {
     file: (fsPath) => ({ fsPath, scheme: 'file', toString: () => `file://${fsPath}` }),
-    parse: (uriStr) => ({ fsPath: uriStr.replace(/^file:\/\//, ''), scheme: 'file', toString: () => uriStr })
+    parse: (uriStr) => {
+      const match = uriStr.match(/^([a-zA-Z0-9+.-]+):(?:\/\/)?(.*)$/);
+      const scheme = match ? match[1] : 'file';
+      const pathPart = match ? match[2] : uriStr;
+      return {
+        fsPath: pathPart,
+        scheme,
+        toString: () => uriStr
+      };
+    }
   },
   workspace: {
     getConfiguration: (section) => ({
@@ -211,7 +314,29 @@ const mockVscode = {
       onDidCreate: () => new Disposable(() => {}),
       onDidDelete: () => new Disposable(() => {}),
       dispose: () => {}
-    })
+    }),
+    textDocuments: [],
+    onDidChangeTextDocument: onDidChangeTextDocumentEmitter.event,
+    onDidOpenTextDocument: onDidOpenTextDocumentEmitter.event,
+    onDidSaveTextDocument: onDidSaveTextDocumentEmitter.event,
+    onDidCloseTextDocument: onDidCloseTextDocumentEmitter.event,
+    onDidChangeConfiguration: onDidChangeConfigurationEmitter.event,
+    _emitDidChangeTextDocument: (e) => onDidChangeTextDocumentEmitter.fire(e),
+    _emitOnDidOpenTextDocument: (doc) => {
+      if (doc && !mockVscode.workspace.textDocuments.includes(doc)) {
+        mockVscode.workspace.textDocuments.push(doc);
+      }
+      onDidOpenTextDocumentEmitter.fire(doc);
+    },
+    _emitOnDidSaveTextDocument: (doc) => onDidSaveTextDocumentEmitter.fire(doc),
+    _emitOnDidCloseTextDocument: (doc) => {
+      if (doc) {
+        const idx = mockVscode.workspace.textDocuments.indexOf(doc);
+        if (idx !== -1) mockVscode.workspace.textDocuments.splice(idx, 1);
+      }
+      onDidCloseTextDocumentEmitter.fire(doc);
+    },
+    _emitDidChangeConfiguration: (e) => onDidChangeConfigurationEmitter.fire(e)
   },
   window: {
     showInformationMessage: async () => undefined,
@@ -232,6 +357,30 @@ const mockVscode = {
     executeCommand: async (cmd, ...args) => undefined
   },
   languages: {
+    _diagnosticCollections: diagnosticCollections,
+    createDiagnosticCollection: (name = 'default') => {
+      const col = new DiagnosticCollection(name);
+      diagnosticCollections.set(name, col);
+      return col;
+    },
+    getDiagnostics: (resource) => {
+      if (resource) {
+        const uriKey = resource.toString ? resource.toString() : String(resource);
+        const list = [];
+        for (const col of diagnosticCollections.values()) {
+          const d = col.get(resource);
+          if (d && d.length) list.push(...d);
+        }
+        return list;
+      }
+      const all = [];
+      for (const col of diagnosticCollections.values()) {
+        for (const [uriKey, diags] of col._diagnostics.entries()) {
+          all.push([mockVscode.Uri.parse(uriKey), diags]);
+        }
+      }
+      return all;
+    },
     registerCompletionItemProvider: () => new Disposable(() => {}),
     registerHoverProvider: () => new Disposable(() => {})
   }
@@ -263,15 +412,28 @@ function installShim() {
 }
 
 function setMockConfig(keyOrObject, value) {
+  const changedKeys = [];
   if (typeof keyOrObject === 'object') {
     Object.assign(currentConfig, keyOrObject);
+    changedKeys.push(...Object.keys(keyOrObject));
   } else {
     currentConfig[keyOrObject] = value;
+    changedKeys.push(keyOrObject);
   }
+  onDidChangeConfigurationEmitter.fire({
+    affectsConfiguration: (sec) => changedKeys.some(k => k === sec || k.startsWith(sec + '.'))
+  });
 }
 
 function resetMockConfig() {
   currentConfig = { ...defaultConfig };
+}
+
+function resetDiagnosticCollections() {
+  for (const col of diagnosticCollections.values()) {
+    col.clear();
+  }
+  diagnosticCollections.clear();
 }
 
 // Auto-install when required
@@ -282,7 +444,14 @@ module.exports = {
   installShim,
   setMockConfig,
   resetMockConfig,
+  resetDiagnosticCollections,
   Disposable,
   EventEmitter,
-  RelativePattern
+  RelativePattern,
+  Position,
+  Range,
+  Selection,
+  Diagnostic,
+  DiagnosticSeverity,
+  DiagnosticCollection
 };

@@ -9,6 +9,13 @@ export interface SqlStringContext {
   endOffset: number;
 }
 
+export interface ExtractedSqlBlock {
+  text: string;
+  startOffset: number;
+  endOffset: number;
+  quoteType: string;
+}
+
 export class SqlDetector {
   private static readonly SQL_VERBS_REGEX =
     /^\s*(?:--[^\n]*\n|\/\*[\s\S]*?\*\/\s*)*(?:SELECT|WITH|INSERT|CREATE|UPDATE|DELETE|DROP|ALTER|DESCRIBE|EXPLAIN|SHOW|ATTACH|DETACH|PRAGMA|COPY|USE|TRUNCATE)\b/i;
@@ -47,6 +54,132 @@ export class SqlDetector {
       startOffset: start,
       endOffset: end
     };
+  }
+
+  /**
+   * Batch discovers all SQL string literals inside a Python or Jupyter notebook document
+   */
+  public static findAllSqlBlocks(document: vscode.TextDocument, enableSmartHeuristic: boolean = true): ExtractedSqlBlock[] {
+    const text = document.getText();
+    const blocks: ExtractedSqlBlock[] = [];
+    const n = text.length;
+    let pos = 0;
+
+    while (pos < n) {
+      const ch = text[pos];
+
+      // Skip Python comments (# ...)
+      if (ch === '#') {
+        pos++;
+        while (pos < n && text[pos] !== '\n') {
+          pos++;
+        }
+        if (pos < n && text[pos] === '\n') {
+          pos++;
+        }
+        continue;
+      }
+
+      // Check for triple quotes (""" or ''')
+      if (
+        (ch === '"' || ch === "'") &&
+        pos + 2 < n &&
+        text[pos + 1] === ch &&
+        text[pos + 2] === ch
+      ) {
+        const quote = text.slice(pos, pos + 3);
+        const openPos = pos;
+        pos += 3;
+        const contentStart = pos;
+        let closePos = -1;
+
+        while (pos < n) {
+          if (text[pos] === '\\') {
+            if (pos + 2 < n && text[pos + 1] === '\r' && text[pos + 2] === '\n') {
+              pos += 3;
+            } else {
+              pos += 2;
+            }
+            continue;
+          }
+          if (
+            text[pos] === ch &&
+            pos + 2 < n &&
+            text[pos + 1] === ch &&
+            text[pos + 2] === ch
+          ) {
+            closePos = pos;
+            pos += 3;
+            break;
+          }
+          pos++;
+        }
+
+        const contentEnd = closePos !== -1 ? closePos : n;
+        const content = text.slice(contentStart, contentEnd);
+        const searchStart = Math.max(0, openPos - 300);
+        const prefixBeforeQuote = text.slice(searchStart, openPos);
+
+        if (this.isSqlContent(content, prefixBeforeQuote, enableSmartHeuristic, quote)) {
+          blocks.push({
+            text: content,
+            startOffset: contentStart,
+            endOffset: contentEnd,
+            quoteType: quote
+          });
+        }
+        continue;
+      }
+
+      // Check for single quotes (" or ')
+      if (ch === '"' || ch === "'") {
+        const quote = ch;
+        const openPos = pos;
+        pos++;
+        const contentStart = pos;
+        let closePos = -1;
+
+        while (pos < n) {
+          if (text[pos] === '\\') {
+            if (pos + 2 < n && text[pos + 1] === '\r' && text[pos + 2] === '\n') {
+              pos += 3;
+            } else {
+              pos += 2;
+            }
+            continue;
+          }
+          if (text[pos] === quote) {
+            closePos = pos;
+            pos++;
+            break;
+          }
+          if (text[pos] === '\n') {
+            closePos = pos;
+            break;
+          }
+          pos++;
+        }
+
+        const contentEnd = closePos !== -1 ? closePos : n;
+        const content = text.slice(contentStart, contentEnd);
+        const searchStart = Math.max(0, openPos - 300);
+        const prefixBeforeQuote = text.slice(searchStart, openPos);
+
+        if (this.isSqlContent(content, prefixBeforeQuote, enableSmartHeuristic, quote)) {
+          blocks.push({
+            text: content,
+            startOffset: contentStart,
+            endOffset: contentEnd,
+            quoteType: quote
+          });
+        }
+        continue;
+      }
+
+      pos++;
+    }
+
+    return blocks;
   }
 
   private static isSqlContent(content: string, prefixBeforeQuote: string, enableSmartHeuristic: boolean, quoteType: string): boolean {

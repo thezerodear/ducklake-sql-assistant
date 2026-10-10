@@ -1,83 +1,160 @@
-# TEST_READY — E2E Test Suite Publication
+# DuckLake SQL Assistant — Test Suite Readiness Declaration
 
-**Date**: 2026-10-07  
-**Author**: E2E Test Writer  
-**Status**: TEST READY (100% Pass Rate Verified)  
-**Execution Environment**: Node.js v24.21.0, PostgreSQL 17.11 (MSVC x64), DuckDB v1.5.5, Windows 11 x64  
-
----
-
-## 1. Executive Summary
-
-The comprehensive, opaque-box, requirement-driven E2E test suite for `ducklake-sql-assistant` has been fully implemented, validated, and verified against a live local PostgreSQL 17 instance configured with `WIN874` encoding and DuckLake metastore schema.
-
-### Summary Metrics
-- **Total Test Cases**: **151**
-- **Passed**: **151 (100%)**
-- **Failed**: **0**
-- **Suites**: **42** across 4 tiers
-- **Execution Duration**: ~26.5 seconds
-- **Orphan Processes**: **0** (verified clean server termination via `pg_ctl stop -m fast` and PID table probe)
+> **Status**: TEST_READY  
+> **Date**: 2026-10-10T10:00:00Z  
+> **Author**: E2E Test Writer (`teamwork_preview_test_writer_diag_e2e`)  
+> **Target Milestone**: E2E Diagnostics Test Infrastructure & Suite (M_TEST)
 
 ---
 
-## 2. Test Artifacts Delivered
+## 1. Readiness Summary
 
-The following test infrastructure and suite files are published and active in the repository:
+The comprehensive automated test suite for **DuckLake SQL Syntax & Schema Diagnostics** is designed, implemented, and verified with **100% pass rate** (67/67 tests passing).
 
-| Path | Purpose | Test Count |
-|---|---|---|
-| `TEST_INFRA.md` | Test philosophy, F1-F14 feature inventory, coverage thresholds, runner specs | Specification |
-| `test/e2e/harness/vscodeShim.js` | Headless VS Code mock shim enabling `SchemaManager` standalone execution | Harness |
-| `test/e2e/harness/pgE2EHarness.js` | PG17 WIN874 daemon lifecycle, isolated port allocation, fail-safe teardown | Harness |
-| `test/e2e/harness/fixtureSeeder.js` | DDL & data seeder for DuckLake metastore, native Thai tables, corrupt comments | Harness |
-| `test/e2e/tier1_features.test.js` | Tier 1: Feature isolation coverage (>=5 test cases per feature across F1-F14) | 71 tests |
-| `test/e2e/tier2_boundary.test.js` | Tier 2: Boundary, corner cases, tone mark sequences, fault resilience across F1-F14 | 70 tests |
-| `test/e2e/tier3_combinations.test.js`| Tier 3: Cross-feature pairwise interactions (metastore + Thai + corrupt coexistence) | 7 tests |
-| `test/e2e/tier4_real_world.test.js` | Tier 4: Real-world lakehouse workloads (analyst exploration, analytics queries) | 3 tests |
-| `test/e2e/runE2E.js` | Master automated non-interactive runner executing all tiers via `node:test` | Runner CLI |
+The test suite runs headlessly using Node.js native test runner (`node --test`) without external display or VS Code GUI dependencies.
 
 ---
 
-## 3. How to Run the Tests
+## 2. Test Runner Instructions
 
-To execute the complete 4-tier E2E test suite non-interactively:
-
-```bash
-node test/e2e/runE2E.js
+### How to Run the Diagnostics Test Suite
+```powershell
+fnm env | Out-String | Invoke-Expression
+node --test test/diagnostics.test.js
 ```
 
-Or run any individual tier directly:
-```bash
-node --test test/e2e/tier1_features.test.js
-node --test test/e2e/tier2_boundary.test.js
-node --test test/e2e/tier3_combinations.test.js
-node --test test/e2e/tier4_real_world.test.js
+### How to Run All Project Tests (105 tests)
+```powershell
+fnm env | Out-String | Invoke-Expression
+node --test test/qol_improvements.test.js test/diagnostics.test.js
+```
+
+### How to Verify TypeScript Build
+```powershell
+fnm env | Out-String | Invoke-Expression
+npm.cmd run compile
 ```
 
 ---
 
-## 4. Verification Results by Coverage Tier
+## 3. Test Coverage Checklist
+
+### Tier 1: Feature Coverage (48 tests)
+- [x] **Unbalanced Parentheses**:
+  - [x] Unclosed opening parenthesis `(` emits `DiagnosticSeverity.Error`
+  - [x] Unmatched closing parenthesis `)` emits `DiagnosticSeverity.Error`
+  - [x] Balanced nested parentheses emit zero errors
+  - [x] Parentheses within string literals ignored
+- [x] **Trailing Commas**:
+  - [x] Comma before `FROM` emits `DiagnosticSeverity.Error`
+  - [x] Comma before `WHERE` emits `DiagnosticSeverity.Error`
+  - [x] Comma before `GROUP BY` / `ORDER BY` emits `DiagnosticSeverity.Error`
+  - [x] Comma before closing parenthesis `)` emits `DiagnosticSeverity.Error`
+  - [x] Comma at statement end / EOF emits `DiagnosticSeverity.Error`
+  - [x] Valid list comma accepted without errors
+- [x] **Incomplete Clauses & Dangling Operators**:
+  - [x] Incomplete `FROM` missing table reference (`SELECT * FROM WHERE`)
+  - [x] Incomplete `SELECT` missing expressions (`SELECT FROM users`)
+  - [x] Incomplete `WHERE` missing condition
+  - [x] Incomplete `GROUP BY` / `ORDER BY` missing expressions
+  - [x] Dangling binary operators (`=`, `+`, `AND`) missing operands
+  - [x] Dangling unary operator (`NOT`) missing condition
+- [x] **Unclosed Quotes**:
+  - [x] Unclosed single quote literal (`'`) emits `DiagnosticSeverity.Error`
+  - [x] Unclosed double quote identifier (`"`) emits `DiagnosticSeverity.Error`
+  - [x] SQL standard doubled quotes (`''`) recognized as escaped
+  - [x] Backslash escaped quotes (`\'`) recognized as escaped
+- [x] **Catalog Table Warnings**:
+  - [x] Unknown table in `FROM` emits `DiagnosticSeverity.Warning`
+  - [x] Known catalog table in `FROM` emits zero warnings
+  - [x] Unknown table in `JOIN` emits `DiagnosticSeverity.Warning`
+  - [x] DuckDB table functions (`read_parquet`, `read_csv`, `range`) exempted
+  - [x] Subqueries in `FROM` / `JOIN` exempted
+- [x] **Column Warnings against Table Schema**:
+  - [x] Known qualified column on table emits zero warnings
+  - [x] Unknown qualified column on table emits `DiagnosticSeverity.Warning`
+  - [x] Known qualified column on table alias emits zero warnings
+  - [x] Unknown qualified column on table alias emits `DiagnosticSeverity.Warning`
+  - [x] Wildcard qualified column reference (`u.*`) accepted
+- [x] **Common Table Expressions (CTEs)**:
+  - [x] Single CTE recognized and exempted from table warnings
+  - [x] Dynamic CTE column reference exempted from schema warnings
+  - [x] Multiple comma-separated CTEs recognized
+  - [x] Recursive CTE (`WITH RECURSIVE`) recognized
+- [x] **Table Alias Handling**:
+  - [x] Table alias without `AS` recognized and exempted
+  - [x] Table alias with `AS` recognized and exempted
+- [x] **Disconnected / Empty Catalog Zero-False-Positive Rule**:
+  - [x] Status `'disconnected'` suppresses all schema warnings
+  - [x] Status `'error'` suppresses all schema warnings
+  - [x] Connected catalog with 0 tables suppresses all schema warnings
+  - [x] Hard syntax errors continue to be reported when catalog is disconnected
+- [x] **Debounce 300ms & Document Lifecycle**:
+  - [x] `onDidChangeTextDocument` debounces validation by 300ms
+  - [x] Rapid typing resets debounce timer and executes only once
+  - [x] `onDidOpenTextDocument` validates immediately (0ms)
+  - [x] `onDidSaveTextDocument` validates immediately (0ms)
+  - [x] `onDidChangeSchema` immediately re-evaluates all open documents
+  - [x] `onDidCloseTextDocument` deletes collection and clears timers
+- [x] **Configuration Settings**:
+  - [x] `ducklake.diagnostics.enable = false` clears collection and halts emission
+  - [x] `ducklake.diagnostics.checkSchema = false` suppresses schema warnings while preserving syntax errors
+
+### Tier 2: Boundary & Corner Cases (11 tests)
+- [x] Empty SQL string and whitespace-only SQL produce zero diagnostics
+- [x] Single-line comments (`--`) containing invalid SQL or parens ignored
+- [x] Block comments (`/* */`) containing invalid SQL or keywords ignored
+- [x] Thai Unicode table and column names (`ตารางลูกค้า`, `รหัส`, `ชื่อ`) resolved cleanly
+- [x] Missing column on Thai table emits schema warning
+- [x] Nonexistent Thai table emits table warning
+- [x] Deeply nested balanced parentheses pass
+- [x] Deeply nested unbalanced parentheses pinpoint exact unclosed paren
+- [x] Multiple chained CTEs (`a -> b -> c`) resolve cleanly
+- [x] Multiple SQL blocks in one Python document validated with independent ranges
+- [x] Jupyter Notebook cell document URI (`vscode-notebook-cell`) supported
+
+### Tier 3: Cross-Feature Combinations (4 tests)
+- [x] CTE with table alias and qualified column access passes cleanly
+- [x] Syntax error inside CTE definition reported accurately
+- [x] Valid syntax with unknown table emits 0 Errors and 1 Warning
+- [x] Disconnected catalog with syntax error emits 1 Error and 0 Warnings
+
+### Tier 4: Real-World Scenarios (4 tests)
+- [x] Complex DuckDB ETL script with window functions, joins, and CTEs
+- [x] Jupyter notebook workflow with DuckLake lakehouse ATTACH queries
+- [x] Mixed error document containing both syntax Error and schema Warning on distinct lines
+- [x] Interactive document editing lifecycle: broken -> typing -> fixed -> closed
+
+---
+
+## 4. Test Execution Results
 
 ```
-====================================================================
-                      E2E TEST RUN SUMMARY
-====================================================================
- ✔ PASS  Tier 1: Feature Isolation Coverage (F1 to F14)          2.85s
- ✔ PASS  Tier 2: Boundary & Corner Cases (F1 to F14)            10.93s
- ✔ PASS  Tier 3: Cross-Feature Combinations & Pairwise Interactions    5.70s
- ✔ PASS  Tier 4: Real-World Workload Scenarios                   1.25s
---------------------------------------------------------------------
- Overall Result: ALL TIERS PASSED (100%)
- Total Duration: 26.46s
-====================================================================
+▶ DuckLake SQL Diagnostics Test Suite
+  ✔ Tier 1: Feature Coverage (48 tests passed)
+  ✔ Tier 2: Boundary & Corner Cases (11 tests passed)
+  ✔ Tier 3: Cross-Feature Combinations (4 tests passed)
+  ✔ Tier 4: Real-world Python Scripts & Jupyter Notebooks (4 tests passed)
+✔ DuckLake SQL Diagnostics Test Suite (1697.7ms)
+ℹ tests 67
+ℹ suites 16
+ℹ pass 67
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
 ```
 
-### Highlights of Key Verified Invariants:
-1. **F1 & F2 (PG17 WIN874 Lifecycle)**: Cluster initializes with `server_encoding = 'WIN874'` and runs as a daemon on isolated port with `stdio: 'ignore'`, preventing Windows process handle deadlock.
-2. **F3 & F4 (Metastore & Thai Fixtures)**: DuckLake metastore (`ducklake_table`, `ducklake_column`, `ducklake_view`, `ducklake_table_stats`) and native Thai tables (`ตารางลูกค้า`, `คำสั่งซื้อ`, `ข้อมูล_น้ำตาล_ผู้ใหญ่`) created with full comment and schema fidelity.
-3. **F5 & F8 (Fault Injection & Resilience)**: Unmapped WIN874 byte sequences (`0xDB`, etc.) reproduce SQLSTATE 22P05 under UTF-8; `PostgresCatalogClient` auto-recovery synchronizes `client_encoding` and utilizes monkey-patched `BufferReader` with safe fallback to load all tables without aborting.
-4. **F6 & F7 (Auto-Detection & Introspection)**: `testConnection()` accurately reports active `WIN874` encoding and DuckLake metastore active table counts; `fetchCatalog()` returns JavaScript Unicode strings matching ground-truth Thai text (`'ตารางลูกค้า'`, `'ข้อมูลลูกค้าภาษาไทย'`).
-5. **F9 (Headless SchemaManager)**: Coordinates multi-catalog caching, table resolution (`findTable`), and column lookup (`getColumnsForTable`) without VS Code runtime.
-6. **F10, F11, F12 (DuckLake Connection & DuckDB Queries)**: DuckLake connection strings strip conflicting client encodings; DuckDB CLI attaches to metastore and executes queries on Thai data (`SELECT *`, `SHOW TABLES`, aggregations, joins) with zero transcoding errors.
-7. **F13 & F14 (Lifecycle Teardown & Zero Orphans)**: Guaranteed teardown stops daemon via `pg_ctl stop -m fast`, validates PID termination in OS process table, releases ports, and cleans temporary directories.
+Combined project tests (`qol_improvements.test.js` + `diagnostics.test.js`):
+- Total tests: **105**
+- Passed: **105**
+- Failed: **0**
+
+---
+
+## 5. Artifact Index
+
+- `test/e2e/harness/vscodeShim.js`: Headless VS Code mock harness (Diagnostic, DiagnosticSeverity, DiagnosticCollection, document events).
+- `test/diagnostics.test.js`: Comprehensive 4-Tier test suite.
+- `TEST_INFRA.md`: Test infrastructure architecture and methodology documentation.
+- `TEST_READY.md`: This readiness declaration.

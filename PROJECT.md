@@ -1,86 +1,110 @@
-# Project: PostgreSQL 17 WIN874 Automated Integration Test Suite
+# Project: DuckLake SQL Syntax & Schema Diagnostics
 
 ## Architecture
-- **Environment**: Node.js v24 (native `node:test` and `node:assert`), Windows x64.
-- **Database Engine**: Live local PostgreSQL 17 (`C:\Users\theze\Downloads\spiderman\postgresql-17.11-3-windows-x64-binaries\pgsql\bin`) configured with `WIN874` database encoding and Thai locale (`Thai_Thailand.874` / `--no-locale`).
-- **Lakehouse Engine**: DuckDB CLI v1.5.5 with `ducklake` and `postgres` extensions.
-- **Client Modules Under Test**:
-  - `PostgresCatalogClient` (`src/catalog/postgresClient.ts`)
-  - `SchemaManager` (`src/catalog/schemaManager.ts`)
-  - `extension.ts` connection string / ATTACH generator helpers
-- **Test Infrastructure**:
-  - `test/integration/harness/pgHarness.ts`: Lifecycle management for PostgreSQL 17 (`initdb`, `pg_ctl start` with stdio ignore, `pg_isready`, seed DDL, fail-safe `pg_ctl stop` + PID `taskkill`).
-  - `test/integration/harness/vscodeShim.ts`: Headless mock shim for `vscode` module allowing `SchemaManager` execution without VS Code runtime.
-  - `test/integration/suites/`: Test suites executed via `node:test`.
-  - `test/integration/run.ts` (or runner script): Master CLI runner wired to `npm run test:integration`.
+- **Environment**: Node.js v24, TypeScript 5.8, VS Code Extensibility API, Windows x64.
+- **Language Integration**:
+  - Python scripts (`.py`, language: `python`, scheme: `file` / `untitled`).
+  - Jupyter Notebooks (`.ipynb`, language: `python`, scheme: `vscode-notebook-cell`).
+- **Core Subsystems**:
+  1. **SQL Discovery & Coordinate Mapper** (`src/parser/sqlDetector.ts`):
+     - Batch extraction of all SQL string literals (triple quotes `"""`, `'''` and single quotes `"`, `'` satisfying SQL heuristics).
+     - Global character offset to VS Code `Position` and `Range` mapping via `document.positionAt(startOffset + localOffset)`.
+  2. **SQL Syntax & Semantic Validator** (`src/diagnostics/sqlValidator.ts`):
+     - Zero-dependency lightweight tokenizer and syntax checker.
+     - Detects unbalanced parentheses, trailing commas before keywords/parens/EOF, incomplete clauses, dangling operators, unclosed quotes.
+     - Emits `vscode.DiagnosticSeverity.Error` with precise ranges.
+  3. **Schema Validator** (`src/diagnostics/schemaValidator.ts`):
+     - Validates `FROM` and `JOIN` table names against `SchemaManager` (`src/catalog/schemaManager.ts`).
+     - Validates qualified column references (`table.col`, `alias.col`) against table schemas.
+     - CTE (`WITH cte AS (...)`) and table alias awareness.
+     - Bypasses built-in table functions (`read_parquet`, `read_csv`, `range`, etc.) and derived subqueries.
+     - Disconnected / empty catalog graceful suppression (zero false positives when `status !== 'connected' || tables.length === 0`).
+     - Emits `vscode.DiagnosticSeverity.Warning`.
+  4. **Diagnostics Lifecycle Manager** (`src/diagnostics/diagnosticsManager.ts`):
+     - Owns `vscode.DiagnosticCollection` (`ducklake-sql-diagnostics`).
+     - Debounced validation (300ms) on `vscode.workspace.onDidChangeTextDocument`.
+     - Immediate validation on `onDidOpenTextDocument`, `onDidSaveTextDocument`, and `schemaManager.onDidChangeSchema`.
+     - Cleanup on `onDidCloseTextDocument` and extension deactivation.
+     - Configuration toggles: `ducklake.diagnostics.enable` and `ducklake.diagnostics.checkSchema`.
+  5. **Headless Test Harness & E2E Test Suite** (`test/e2e/harness/vscodeShim.js`, `test/diagnostics.test.js`):
+     - Mocks `DiagnosticCollection`, `Diagnostic`, `DiagnosticSeverity`.
+     - 4-Tier test suite covering syntax errors, schema checks, CTEs, debouncing, and settings.
 
 ## Feature Inventory
 | # | Feature | Description | Milestone | Source |
 |---|---------|-------------|-----------|--------|
-| F1 | PG17 Binary Detection & Cluster Init | Detect PG17 binaries and initialize WIN874 cluster via `initdb -E WIN874 --locale=Thai_Thailand.874` | M1 | ORIGINAL_REQUEST §R1 |
-| F2 | Isolated Port & Lifecycle Daemon | Start PG17 with `pg_ctl` on isolated port (e.g. 5439) with stdio ignore, health check via `pg_isready` | M1 | ORIGINAL_REQUEST §R1 |
-| F3 | DuckLake Metastore Schema Seeding | Seed PostgreSQL with DuckLake tables (`ducklake_table`, `ducklake_column`, `ducklake_view`, `ducklake_table_stats`, `ducklake_schema`, `ducklake_snapshot`) | M1 | ORIGINAL_REQUEST §R1 |
-| F4 | Native Thai Table & Comment Fixtures | Seed PostgreSQL with native Thai tables (`ตารางลูกค้า`, `คำสั่งซื้อ`), Thai columns, and comments (`obj_description`, `col_description`) | M1 | ORIGINAL_REQUEST §R1 |
-| F5 | Corrupt Comment Fault Injection Fixture | Seed table with unmapped WIN874 byte sequence (e.g. `\xdb`) to trigger SQLSTATE 22P05 under UTF8 for resilience testing | M1 | ORIGINAL_REQUEST §R2 |
-| F6 | Connection & Encoding Auto-Detection | `PostgresCatalogClient.testConnection()` detects active `WIN874` encoding and DuckLake metastore presence | M2 | ORIGINAL_REQUEST §R2 |
-| F7 | Catalog Introspection & Thai Decoding | `fetchCatalog()` retrieves DuckLake and native tables, accurately decoding Thai names and comments into JS strings | M2 | ORIGINAL_REQUEST §R2 |
-| F8 | Comment Fault Resilience & Fallback | Verify `fetchCatalog()` recovers gracefully on corrupt comments/unmapped byte sequences without aborting catalog load | M2 | ORIGINAL_REQUEST §R2 |
-| F9 | SchemaManager Multi-Catalog Coordination | Headless execution of `SchemaManager` coordinating catalogs with VS Code shim | M2 | ORIGINAL_REQUEST §R2 |
-| F10 | DuckLake Connection String Generation | Verify extension generated DuckLake ATTACH strings do not inject conflicting client encoding options | M3 | ORIGINAL_REQUEST §R3 |
-| F11 | DuckLake & DuckDB Normal Query Execution | End-to-end DuckDB attach to PostgreSQL metastore, executing `SELECT *`, `SHOW TABLES` without transcoding errors | M3 | ORIGINAL_REQUEST §R3 |
-| F12 | Thai Data/Metadata Query Execution | Verify DuckDB queries against tables/views containing Thai names and values | M3 | ORIGINAL_REQUEST §R3 |
-| F13 | Single Test Command Execution | `npm run test:integration` builds extension and runs the complete integration test suite | M4 | ORIGINAL_REQUEST §R4 |
-| F14 | Clean Process Lifecycle & Zero Orphans | Teardown guarantees clean server stop (`pg_ctl stop -m fast` + PID fallback), removing temp dirs and leaving 0 hanging processes | M4 | ORIGINAL_REQUEST §R4 |
-| F15 | E2E Acceptance & Adversarial Hardening | Pass 100% of E2E test suite (Tiers 1-4) and harden via Tier 5 adversarial coverage testing | M5 | ORIGINAL_REQUEST Acceptance Criteria |
+| F1 | Multi-Block SQL Discovery in Documents | Batch discovery of all SQL strings in Python and notebook cells with exact start/end offsets | M1 | ORIGINAL_REQUEST §1 |
+| F2 | Parentheses Balance Validation | Detect and report unclosed `(` or unexpected `)` with `DiagnosticSeverity.Error` | M1 | ORIGINAL_REQUEST §1 |
+| F3 | Trailing Comma Validation | Detect and report trailing commas before `FROM`, `WHERE`, `GROUP BY`, `ORDER BY`, `HAVING`, `LIMIT`, `)`, or EOF | M1 | ORIGINAL_REQUEST §1 |
+| F4 | Incomplete Clauses & Dangling Operators | Detect dangling operators (`+`, `-`, `*`, `/`, `AND`, `OR`, `=`) and incomplete clauses (`SELECT * FROM WHERE`) | M1 | ORIGINAL_REQUEST §1 |
+| F5 | Unclosed Quotes Validation | Detect unclosed single/double/backtick quotes inside SQL blocks | M1 | ORIGINAL_REQUEST §1 |
+| F6 | Catalog Table Existence Verification | Check `FROM` and `JOIN` table references against `SchemaManager`; emit `DiagnosticSeverity.Warning` on unknown tables | M1 | ORIGINAL_REQUEST §2 |
+| F7 | Qualified Column Schema Verification | Check `table.col` and `alias.col` against catalog columns; emit `DiagnosticSeverity.Warning` on unknown columns | M1 | ORIGINAL_REQUEST §2 |
+| F8 | CTE & Table Alias Resolution | Recognize `WITH [RECURSIVE] cte AS (...)` and table aliases so they are not flagged as missing tables | M1 | ORIGINAL_REQUEST §2 |
+| F9 | Disconnected / Empty Catalog Suppression | Zero false positives when catalog is disconnected or contains no tables | M1 | ORIGINAL_REQUEST §2 |
+| F10 | Diagnostics Collection & Debounce Lifecycle | Manage `ducklake-sql-diagnostics` collection, 300ms debounce on edits, immediate on open/save/catalog refresh, cleanup on close | M2 | ORIGINAL_REQUEST §3 |
+| F11 | Configuration Settings Contribution | Support `ducklake.diagnostics.enable` (default: true) and `ducklake.diagnostics.checkSchema` (default: true) in `package.json` | M2 | ORIGINAL_REQUEST §3 |
+| F12 | Headless VS Code Diagnostics Shim | Add `createDiagnosticCollection`, `Diagnostic`, `DiagnosticSeverity` to `test/e2e/harness/vscodeShim.js` | M_TEST | ORIGINAL_REQUEST §4 |
+| F13 | Programmatic Automated Test Suite | Comprehensive 4-Tier automated test suite in `test/diagnostics.test.js` executed via `node --test` | M_TEST | ORIGINAL_REQUEST §4 |
+| F14 | Clean TypeScript Build | Clean compilation with zero errors (`npm run compile`) | M3 | ORIGINAL_REQUEST §4 |
+| F15 | Extension Packaging (.vsix) | Successfully build and package extension into `.vsix` file | M3 | ORIGINAL_REQUEST §4 |
 
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| M1 | PostgreSQL 17 Test Harness & Fixtures | Implement `pgHarness.ts` with WIN874 init, lifecycle control, DuckLake schema seeding, Thai fixtures, and fault injection | none | DONE |
-| M2 | Catalog Introspection & Thai Decoding Suite | Implement test suite for `PostgresCatalogClient` and `SchemaManager` with VS Code shim, verifying encoding auto-detection, Thai decoding, and comment fault resilience | M1 | PLANNED |
-| M3 | DuckLake Query Execution Suite | Implement test suite verifying DuckLake ATTACH string generation, DuckDB engine attach, `SELECT *`, `SHOW TABLES`, and Thai query execution | M1 | PLANNED |
-| M4 | Test Runner CLI & Lifecycle Integration | Implement `npm run test:integration` command, compilation hook, unified test runner, and fail-safe teardown | M1, M2, M3 | PLANNED |
-| M5 | Final Milestone: 100% E2E Pass & Adversarial Hardening | Pass 100% of E2E test suite (Tiers 1-4) followed by Tier 5 adversarial coverage hardening | M4 | PLANNED |
+| M_TEST | E2E Diagnostics Test Infrastructure & Suite | Test harness shim update in `vscodeShim.js`, 4-tier test cases in `test/diagnostics.test.js`, publish `TEST_READY.md` | none | IN_PROGRESS |
+| M1 | SQL Validator & Schema Diagnostics Engine | Implement `src/parser/sqlDetector.ts` batch discovery, `src/diagnostics/sqlValidator.ts`, and `src/diagnostics/schemaValidator.ts` | none | IN_PROGRESS |
+| M2 | Diagnostics Manager, Lifecycle & Config | Implement `src/diagnostics/diagnosticsManager.ts`, wire into `src/extension.ts`, register settings in `package.json` | M1 | PLANNED |
+| M3 | Final Milestone: 100% E2E Pass, Adversarial Hardening, Build & VSIX | Pass 100% tests, adversarial coverage verification (Tier 5), verify clean compile (`npm run compile`), package `.vsix` | M_TEST, M1, M2 | PLANNED |
 
 ## Interface Contracts
 
-### Harness ↔ Test Suites (`test/integration/harness/pgHarness.ts`)
+### Diagnostics Validator Contract (`src/diagnostics/sqlValidator.ts`)
 ```typescript
-export interface HarnessConfig {
-  binDir: string;
-  dataDir: string;
-  port: number;
-  database: string;
-  user: string;
+import * as vscode from 'vscode';
+
+export interface SqlDiagnosticItem {
+  range: vscode.Range;
+  message: string;
+  severity: vscode.DiagnosticSeverity;
+  code?: string | number;
 }
 
-export interface PgHarness {
-  start(): Promise<void>;
-  stop(): Promise<void>;
-  seedFixtures(): Promise<void>;
-  getConnectionConfig(): { host: string; port: number; database: string; user: string };
-  getDuckDbAttachString(alias: string, dataPath: string): string;
+export interface SqlValidationOptions {
+  checkSyntax: boolean;
+  checkSchema: boolean;
+  catalogTables?: Map<string, { columns: string[] }>;
+  isCatalogConnected: boolean;
+}
+
+export interface ISqlValidator {
+  validateSql(
+    document: vscode.TextDocument,
+    sqlBlock: { text: string; startOffset: number; endOffset: number },
+    options: SqlValidationOptions
+  ): SqlDiagnosticItem[];
 }
 ```
 
-### Test Runner ↔ NPM (`package.json`)
-```json
-{
-  "scripts": {
-    "test:integration": "node test/integration/run.js"
-  }
+### Diagnostics Manager Contract (`src/diagnostics/diagnosticsManager.ts`)
+```typescript
+import * as vscode from 'vscode';
+import { SchemaManager } from '../catalog/schemaManager';
+
+export class SqlDiagnosticsManager implements vscode.Disposable {
+  constructor(schemaManager: SchemaManager);
+  public triggerValidation(document: vscode.TextDocument, immediate?: boolean): void;
+  public clearDiagnostics(document: vscode.TextDocument): void;
+  public dispose(): void;
 }
 ```
 
 ## Code Layout
-- `src/`: Core extension source code (read-only for tests; only bugfixes if required)
-  - `src/catalog/postgresClient.ts`
-  - `src/catalog/schemaManager.ts`
-  - `src/extension.ts`
-- `test/integration/`: Integration test implementation
-  - `test/integration/harness/pgHarness.ts` (or `.js`): PostgreSQL 17 WIN874 lifecycle & fixture management
-  - `test/integration/harness/vscodeShim.ts` (or `.js`): Headless VS Code mock shim
-  - `test/integration/suites/catalogIntrospection.test.ts` (or `.js`): Introspection & Thai decoding tests
-  - `test/integration/suites/ducklakeQuery.test.ts` (or `.js`): DuckLake & DuckDB query tests
-  - `test/integration/run.ts` (or `.js`): Master non-interactive runner
-- `test/e2e/`: Opaque-box E2E test suite managed by E2E Testing Track
+- `src/parser/sqlDetector.ts`: Add `findAllSqlBlocks(document: vscode.TextDocument): ExtractedSqlBlock[]`
+- `src/diagnostics/sqlValidator.ts`: Pure syntax validation & tokenizer
+- `src/diagnostics/schemaValidator.ts`: Schema reference validation against `SchemaManager`
+- `src/diagnostics/diagnosticsManager.ts`: VS Code collection management, debouncing, event wiring
+- `src/extension.ts`: Instantiate and register `SqlDiagnosticsManager` in `activate()`
+- `package.json`: Add `ducklake.diagnostics.enable` and `ducklake.diagnostics.checkSchema` configuration properties
+- `test/e2e/harness/vscodeShim.js`: Add `createDiagnosticCollection`, `Diagnostic`, `DiagnosticSeverity`
+- `test/diagnostics.test.js`: E2E test suite covering syntax, schema, CTEs, debounce, and config

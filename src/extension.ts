@@ -10,6 +10,7 @@ import { DuckLakeConnectionWebview } from './ui/connectionWebview';
 import { ConfigStorage } from './catalog/configStorage';
 import { execFile } from 'child_process';
 import { toggleCommentCommand } from './commands/commentCommand';
+import { SqlDiagnosticsManager } from './diagnostics/diagnosticsManager';
 
 // Registered completion trigger characters: delimiters and alphanumeric typing (excluding newline and space)
 export const TRIGGER_CHARACTERS = [
@@ -27,6 +28,7 @@ export function activate(context: vscode.ExtensionContext) {
   ConfigStorage.init(context.globalStorageUri, context);
 
   const schemaManager = new SchemaManager();
+  const diagnosticsManager = new SqlDiagnosticsManager(schemaManager);
   const statusBar = new DuckLakeStatusBar(schemaManager);
   const treeDataProvider = new DuckLakeTreeDataProvider(schemaManager);
 
@@ -369,6 +371,7 @@ con.sql("SHOW TABLES;").show()
 
   context.subscriptions.push(
     schemaManager,
+    diagnosticsManager,
     statusBar,
     treeView,
     completionProvider,
